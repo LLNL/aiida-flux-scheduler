@@ -1,0 +1,58 @@
+[build-system]
+requires = ['flit_core>=3.4,<4']
+build-backend = 'flit_core.buildapi'
+
+[project]
+name = 'aiida_flux_scheduler'
+dynamic = ['description', 'version']
+authors = [
+    {name = 'Nathan Keilbart', email = 'keilbart1@llnl.gov'}
+]
+readme = 'README.md'
+license = {file = 'LICENSE.txt'}
+classifiers = [
+    'Development Status :: 4 - Beta',
+    'Framework :: AiiDA',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: POSIX :: Linux',
+    'Operating System :: MacOS :: MacOS X',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Topic :: Scientific/Engineering'
+]
+keywords = ['aiida', 'workflows', 'flux', 'scheduler']
+requires-python = '>=3.9'
+dependencies = [
+    'aiida-core~=2.0',
+    'numpy'
+]
+
+[project.urls]
+Source = ''
+
+[project.optional-dependencies]
+docs = [
+    'sphinx',
+    'sphinx-autoapi',
+    'sphinx-book-theme',
+    'sphinx-click',
+    'sphinx-copybutton'
+]
+pre-commit = [
+    'pre-commit',
+    'pylint',
+]
+tests = [
+    'pgtest',
+    'pytest',
+    'pytest-regressions',
+]
+
+[project.entry-points.'aiida.schedulers']
+"core.flux" ="aiida_flux_scheduler.flux:FluxScheduler"
+
+
+[tool.flit.module]
+name = 'aiida_flux_scheduler'
