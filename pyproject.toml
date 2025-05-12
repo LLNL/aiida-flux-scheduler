@@ -30,7 +30,9 @@ dependencies = [
 ]
 
 [project.urls]
-Source = ''
+Homepage = "https://github.com/LLNL/aiida-flux-scheduler"
+Repository = "https://github.com/LLNL/aiida-flux-scheduler"
+Issues = "https://github.com/LLNL/aiida-flux-scheduler/issues"
 
 [project.optional-dependencies]
 docs = [
