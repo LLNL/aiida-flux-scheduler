@@ -3,6 +3,7 @@ Plugin for Flux.
 """
 
 from typing import Any
+from aiida.orm import load_node
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
 from aiida.schedulers import Scheduler, SchedulerError
@@ -77,6 +78,8 @@ class FluxScheduler(Scheduler):
         # 14.03.7 and later
     ]
 
+    parent_pk = None
+
     def _get_joblist_command(
         self, 
         jobs: list[str] | None = None, 
@@ -138,6 +141,13 @@ class FluxScheduler(Scheduler):
         header = []
 
         if job_tmpl.job_name:
+
+            # Get the AiiDA PK value from the name and get the parent workflow PK.
+            pk = job_tmpl.job_name.split('-')[-1]
+            parent = load_node(pk)
+            while parent.caller:
+                parent = parent.caller
+            self.parent_pk = parent.pk
 
             # Remove unwanted symbols leaving only letters, numbers, dots, 
             # and dashes.
@@ -243,6 +253,17 @@ class FluxScheduler(Scheduler):
         """
 
         submit_command = f"flux batch {submit_script}"
+
+        if self.parent_pk:
+            whoami = self.transport.whoami()
+            job_list = self.get_jobs(user=whoami)
+
+            job_id = None
+            for job in job_list:
+                if f'aiida-{self.parent_pk}' == job.title:
+                    job_id = job.job_id
+            if job_id:
+                submit_command = f"flux proxy {job_id} " + submit_command
 
         self.logger.info(f'submitting with : {submit_command}')
 
@@ -393,6 +414,8 @@ class FluxScheduler(Scheduler):
                 this_job.submission_time = submission_time
             except ValueError:
                 self.logger.warning(f'Error parsing submission_time for job id {this_job.job_id}')
+
+            this_job.title = thisjob_dict['job_name']
 
             job_list.append(this_job)
 
