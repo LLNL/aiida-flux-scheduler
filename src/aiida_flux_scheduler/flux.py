@@ -149,18 +149,7 @@ class FluxScheduler(Scheduler):
                 parent = parent.caller
             self.parent_pk = parent.pk
 
-            # Remove unwanted symbols leaving only letters, numbers, dots, 
-            # and dashes.
-            job_name = re.sub(r'[^a-zA-Z0-9_.-]+', '', job_tmpl.job_name)
-
-            # prepend a 'j' (for 'job') before the string if the string
-            # is now empty or does not start with a valid charachter
-            if not job_name or (job_name[0] not in string.ascii_letters + string.digits):
-                job_name = f'j{job_name}'
-
-            # Truncate to the first 128 characters
-            # Nothing is done if the string is shorter.
-            job_name = job_name[:128]
+            job_name = f'aiida-{self.parent_pk}'
 
             header.append(f'#flux: --job-name={job_name}')
 
