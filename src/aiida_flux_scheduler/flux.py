@@ -55,7 +55,7 @@ class FluxScheduler(Scheduler):
     _FIELD_SEPARATOR="|"
 
     _features = {
-        'can_query_by_user': False,
+        'can_query_by_user': True,
     }
 
     _job_resource_class = FluxJobResource
