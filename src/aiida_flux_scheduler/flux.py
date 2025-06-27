@@ -94,6 +94,8 @@ class FluxScheduler(Scheduler):
         :return comm: Command to retrieve full job information.
         """
 
+        print(f'{dir(self)=}')
+
         command = '"flux jobs {user} {format}"'
 
         fields = defaultdict(str, {})
