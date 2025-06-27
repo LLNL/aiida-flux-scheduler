@@ -117,6 +117,8 @@ class FluxScheduler(Scheduler):
 
         comm = ' '.join(command)
 
+        self.logger.info(f'Checking joblist with {comm}')
+
         return comm
     
     def _get_detailed_job_info_command(
