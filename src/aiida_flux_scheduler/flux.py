@@ -13,6 +13,7 @@ import re
 import json
 import string
 import datetime
+from collections import defaultdict
 
 _MAP_STATUS_FLUX = {
     'D': JobState.QUEUED,  # Depend
@@ -93,9 +94,12 @@ class FluxScheduler(Scheduler):
         :return comm: Command to retrieve full job information.
         """
 
-        command = [ "flux", "proxy"]
+        command = '"flux jobs {user} {format}"'
+
+        fields = defaultdict(str, {})
 
         if jobs:
+            command = 'flux proxy {job_id} ' + command
             joblist = []
             if isinstance(jobs, str):
                 joblist = jobs
@@ -103,20 +107,13 @@ class FluxScheduler(Scheduler):
                 if not isinstance(jobs, (tuple, list)):
                     raise TypeError("If provided, the 'jobs' variable must be a string or a list of strings")
                 joblist = ' '.join(jobs)
-            command.append(joblist)
-
-        #if self.parent_pk:
-            #job_id = self._get_parent_job_id()
-            #if job_id is not None:
-        command.append('"flux jobs')
+            fields['job_id'] = joblist
 
         if user:
-            command.append(f'-u {user}')
+            fields['user'] = f'-u {user}'
 
-        command.append(f"--format '{self._FIELD_SEPARATOR.join(f'{{{field[0]}}}' for field in self.fields)}'")
-        command.append('"')
-
-        comm = ' '.join(command)
+        fields['format'] = f"--format '{self._FIELD_SEPARATOR.join(f'{{{field[0]}}}' for field in self.fields)}'"
+        comm = command.format_map(fields)
 
         self.logger.info(f'Checking joblist with {comm}')
 
