@@ -93,7 +93,7 @@ class FluxScheduler(Scheduler):
         :return comm: Command to retrieve full job information.
         """
 
-        command = [ "flux", "jobs"]
+        command = [ "flux", "proxy"]
 
         if jobs:
             joblist = []
@@ -108,7 +108,7 @@ class FluxScheduler(Scheduler):
         #if self.parent_pk:
             #job_id = self._get_parent_job_id()
             #if job_id is not None:
-        command = [f'flux proxy {job_id}'] + command
+        command.append(['flux', 'jobs'])
 
         if user:
             command.append(f'-u {user}')
