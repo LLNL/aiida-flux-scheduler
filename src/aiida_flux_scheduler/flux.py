@@ -108,7 +108,7 @@ class FluxScheduler(Scheduler):
         #if self.parent_pk:
             #job_id = self._get_parent_job_id()
             #if job_id is not None:
-        command.append(['flux', 'jobs'])
+        command.append('flux jobs')
 
         if user:
             command.append(f'-u {user}')
