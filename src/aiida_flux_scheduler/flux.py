@@ -516,7 +516,6 @@ class FluxScheduler(Scheduler):
 
             try:
                 detailed_stdout = json.loads(detailed_job_info['stdout'])
-                print(f'{detailed_stdout=}')
             except KeyError:
                 raise ValueError(
                     'the `detailed_job_info` does not contain the '
