@@ -55,7 +55,7 @@ class FluxScheduler(Scheduler):
     _FIELD_SEPARATOR="|"
 
     _features = {
-        'can_query_by_user': True,
+        'can_query_by_user': False,
     }
 
     _job_resource_class = FluxJobResource
@@ -105,10 +105,10 @@ class FluxScheduler(Scheduler):
                 joblist = ' '.join(jobs)
             command.append(joblist)
 
-        if self.parent_pk:
-            job_id = self._get_parent_job_id()
-            if job_id is not None:
-                command = [f'flux proxy {job_id}'] + command
+        #if self.parent_pk:
+            #job_id = self._get_parent_job_id()
+            #if job_id is not None:
+        command = [f'flux proxy {job_id}'] + command
 
         if user:
             command.append(f'-u {user}')
