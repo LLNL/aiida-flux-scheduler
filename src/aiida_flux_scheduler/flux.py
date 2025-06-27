@@ -105,6 +105,11 @@ class FluxScheduler(Scheduler):
                 joblist = ' '.join(jobs)
             command.append(joblist)
 
+        if self.parent_pk:
+            job_id = self._get_parent_job_id()
+            if job_id is not None:
+                command = [f'flux proxy {job_id}'] + command
+
         if user:
             command.append(f'-u {user}')
 
@@ -228,7 +233,28 @@ class FluxScheduler(Scheduler):
         header = '\n'.join(header)         
 
         return header
-    
+
+    def _get_parent_job_id(self) -> int:
+        """
+        Return the parent job id of the current aiida parent pk.
+
+        :return job_id: Job id of the current parent flux job.
+        """
+
+        user = self.transport.whoami()
+
+        with self.transport:
+            retval, stdout, stderr = self.transport.exec_command_wait(f'flux jobs -u {user}')
+
+        joblist = self._parse_joblist_output(retval, stdout, stderr)
+
+        job_id = None
+        for job in joblist:
+            if f'aiida-{self.parent_pk}' == job.title:
+                job_id = job.job_id
+
+        return job_id
+
     def _get_submit_command(
         self, 
         submit_script: str
@@ -244,15 +270,16 @@ class FluxScheduler(Scheduler):
         submit_command = f"flux batch {submit_script}"
 
         if self.parent_pk:
-            whoami = self.transport.whoami()
-            job_list = self.get_jobs(user=whoami)
-
-            job_id = None
-            for job in job_list:
-                if f'aiida-{self.parent_pk}' == job.title:
-                    job_id = job.job_id
+            job_id = self._get_parent_job_id()
             if job_id:
                 submit_command = f"flux proxy {job_id} " + submit_command
+                # Get jobs inside flux allocation to see if there is a sleep command
+                with self.transport:
+                    retval, stdout, stderr = self.transport.exec_command_wait(f'flux jobs')
+                joblist = self._parse_joblist_output(retval, stdout, stderr)
+                for job in joblist:
+                    if job.job_name == 'sleep':
+                        submit_command += f'; flux proxy {job_id} flux cancel {job.job_id}'               
 
         self.logger.info(f'submitting with : {submit_command}')
 
