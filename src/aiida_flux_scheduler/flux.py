@@ -94,7 +94,7 @@ class FluxScheduler(Scheduler):
         :return comm: Command to retrieve full job information.
         """
 
-        print(f'{dir(self)=}')
+        print(f'{self.parent_pk}')
 
         command = '"flux jobs {user} {format}"'
 
@@ -232,7 +232,9 @@ class FluxScheduler(Scheduler):
         if job_tmpl.custom_scheduler_commands:
             header.append(job_tmpl.custom_scheduler_commands)
 
-        header = '\n'.join(header)         
+        header = '\n'.join(header)    
+
+        print(f'{self.parent_pk}')     
 
         return header
 
@@ -242,6 +244,8 @@ class FluxScheduler(Scheduler):
 
         :return job_id: Job id of the current parent flux job.
         """
+
+        print(f'{self.parent_pk}')
 
         user = self.transport.whoami()
 
@@ -268,6 +272,8 @@ class FluxScheduler(Scheduler):
             working directory.
         :return submit_command: Command used to submit the submission script.
         """
+
+        print(f'{self.parent_pk}')
 
         submit_command = f"flux batch {submit_script}"
 
@@ -301,6 +307,8 @@ class FluxScheduler(Scheduler):
         :param stderr: Error from standard output.
         :return job_id: Job ID from the submitted job.
         """
+
+        print(f'{self.parent_pk}')
 
         if retval != 0:
             self.logger.error(f'Error in _parse_submit_output: {retval=}; {stdout=}; {stderr=}')
@@ -339,6 +347,8 @@ class FluxScheduler(Scheduler):
         :param stderr: Standard error from command.
         :return job_list: List of JobInfo instances for each submitted job.
         """
+
+        print(f'{self.parent_pk}')
 
         num_fields = len(self.fields)
 
