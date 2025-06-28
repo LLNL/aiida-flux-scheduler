@@ -243,16 +243,18 @@ class FluxScheduler(Scheduler):
     
     def _flux_allocation(
         self,
-        working_directory: str
+        working_directory: str,
+        submit_script: str
     ):
         """
         Start a flux allocation to submit jobs.
 
         :param working_directory: Path to the working directory on remote machine.
+        :param submit_script: Name of the submission script.
         """
         # Get the job name to get parent pk
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait('grep "--job-name" _aiidasubmit.sh')
+        result = self.transport.exec_command_wait(f'grep "--job-name" {submit_script}')
         pk = int(result.split('-')[-1])
 
         parent = self._get_parent_node(pk)
@@ -373,7 +375,7 @@ class FluxScheduler(Scheduler):
 
         :return: return a string with the job ID in a valid format to be used for querying.
         """
-        flux_id = self._flux_allocation()
+        flux_id = self._flux_allocation(working_directory, submit_script)
         self.transport.chdir(working_directory)
         result = self.transport.exec_command_wait(self._get_submit_command(escape_for_bash(submit_script), flux_id))
         return self._parse_submit_output(*result)
