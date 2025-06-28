@@ -254,7 +254,7 @@ class FluxScheduler(Scheduler):
         """
         # Get the job name to get parent pk
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(f'grep "--job-name" {submit_script}')
+        result = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')
         print(result)
         pk = int(result.split('-')[-1])
 
@@ -264,9 +264,12 @@ class FluxScheduler(Scheduler):
         state = self._check_allocation(parent.pk)
 
         if not state.active:
+            self.logger.info(f'No active flux allocation was found for aiida-{parent.pk}. Starting one now.')
             flux_id = self._start_allocation(parent, working_directory)
         elif state.active:
             flux_id = state.flux_id
+
+        self.logger.info(f'A parent flux allocation for aiida-{parent.pk} was started with flux id: {flux_id}.')
 
         return flux_id
 
