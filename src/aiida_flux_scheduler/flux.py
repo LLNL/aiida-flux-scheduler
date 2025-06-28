@@ -9,11 +9,13 @@ from aiida.engine.processes.exit_code import ExitCode
 from aiida.schedulers import Scheduler, SchedulerError
 from aiida.schedulers.datastructures import JobInfo, JobState, JobTemplate, NodeNumberJobResource
 from aiida.common.extendeddicts import AttributeDict
+from aiida.common.escaping import escape_for_bash
+from aiida.orm import WorkChainNode, CalcFunctionNode
 import re
 import json
 import string
 import datetime
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 _MAP_STATUS_FLUX = {
     'D': JobState.QUEUED,  # Depend
@@ -79,8 +81,6 @@ class FluxScheduler(Scheduler):
         # 14.03.7 and later
     ]
 
-    parent_pk = None
-
     def _get_joblist_command(
         self, 
         jobs: list[str] | None = None, 
@@ -93,8 +93,6 @@ class FluxScheduler(Scheduler):
         :param user: Username for the job queue.
         :return comm: Command to retrieve full job information.
         """
-
-        print(f'{self.parent_pk}')
 
         command = '"flux jobs {user} {format}"'
 
@@ -148,17 +146,7 @@ class FluxScheduler(Scheduler):
         header = []
 
         if job_tmpl.job_name:
-
-            # Get the AiiDA PK value from the name and get the parent workflow PK.
-            pk = job_tmpl.job_name.split('-')[-1]
-            parent = load_node(pk)
-            while parent.caller:
-                parent = parent.caller
-            self.parent_pk = parent.pk
-
-            job_name = f'aiida-{self.parent_pk}'
-
-            header.append(f'#flux: --job-name={job_name}')
+            header.append(f'#flux: --job-name={job_tmpl.job_name}')
 
         if job_tmpl.sched_output_path:
             header.append(f'#flux: --output={job_tmpl.sched_output_path}')
@@ -232,38 +220,168 @@ class FluxScheduler(Scheduler):
         if job_tmpl.custom_scheduler_commands:
             header.append(job_tmpl.custom_scheduler_commands)
 
-        header = '\n'.join(header)    
-
-        print(f'{self.parent_pk}')     
+        header = '\n'.join(header)         
 
         return header
-
-    def _get_parent_job_id(self) -> int:
+    
+    def _get_parent_node(
+            self, 
+            pk: int
+        ) -> int:
         """
-        Return the parent job id of the current aiida parent pk.
+        Return parent pk based on calculation pk retrieved.
 
-        :return job_id: Job id of the current parent flux job.
+        :param pk: AiiDA PK
+        :return: The parent pk of the calculation pk.
         """
 
-        print(f'{self.parent_pk}')
+        parent = load_node(pk)
+        while parent.caller:
+            parent = parent.caller
 
-        user = self.transport.whoami()
+        return parent
+    
+    def _flux_allocation(
+        self,
+        working_directory: str
+    ):
+        """
+        Start a flux allocation to submit jobs.
 
-        with self.transport:
-            retval, stdout, stderr = self.transport.exec_command_wait(f'flux jobs -u {user}')
+        :param working_directory: Path to the working directory on remote machine.
+        """
+        # Get the job name to get parent pk
+        self.transport.chdir(working_directory)
+        result = self.transport.exec_command_wait('grep "--job-name" _aiidasubmit.sh')
+        pk = int(result.split('-')[-1])
 
-        joblist = self._parse_joblist_output(retval, stdout, stderr)
+        parent = self._get_parent_node(pk)
 
-        job_id = None
+        # Based on the parent_pk, see if there is an active flux allocation.
+        state = self._check_allocation(parent.pk)
+
+        if not state.active:
+            flux_id = self._start_allocation(parent, working_directory)
+        elif state.active:
+            flux_id = state.flux_id
+
+        return flux_id
+
+    def _check_allocation(
+        self, 
+        parent_pk: int
+    ):
+        """
+        Given a parent_pk, check to see if Flux already has an active allocation.
+
+        :param parent_pk: The parent PK of the job being submitted.
+        """
+        joblist = self.get_jobs()
+        active = False
+        flux_id = None
         for job in joblist:
-            if f'aiida-{self.parent_pk}' == job.title:
-                job_id = job.job_id
+            if parent_pk in job.job_name:
+                active = True
+                flux_id = job.job_id
 
-        return job_id
+        State = namedtuple('State', [active, flux_id])
+        state = State(active, flux_id)
+
+        return state
+
+    def _start_allocation(
+        self,
+        parent
+    ) -> str:
+        """
+        Start a flux allocation based on the job submission script in the working directory.
+
+        :param parent_node: AiiDA workflow node of the parent
+        :return: Job ID of the Flux instance.
+        """
+        if isinstance(parent, WorkChainNode):
+            metadata = parent.get_metadata_inputs()
+        elif isinstance(parent, CalcFunctionNode):
+            metadata = parent.get_options()
+        else:
+            raise TypeError(f'{parent} is not a recognized type for this scheduler.')
+        
+        keys = {
+            'num_machines': True, 
+            'num_mpi_procs_per_machine': True, 
+            'queue_name': True, 
+            'max_wallclock_seconds': True, 
+            'account': False
+        }
+
+        values = defaultdict(str, {})
+        for key in keys:
+            result = self.recursive_dict_search(key, metadata)
+            if result:
+                match key:
+                    case 'num_machines':
+                        values[key] = f'--nodes={result}'
+                    case 'num_mpi_procs_per_machine':
+                        values['num_tasks'] = values['num_machines'] * result
+                    case 'queue_name':
+                        values[key] = result
+                    case 'max_wallclock_seconds':
+                        values[key] = int(result) + 60
+                    case 'account':
+                        values[key] = result
+
+        values['parent_pk'] = parent.pk
+            
+        flux_submit = (
+            'flux alloc {parent_pk} {num_machines} {num_tasks} '
+            '{queue_name} {account} {max_wallclock_seconds}s --bg'
+        )
+
+        flux_submit = flux_submit.format_map(values)
+
+        flux_id = self.transport.exec_command_wait(flux_submit)
+
+        return flux_id
+
+    def recursive_dict_search(
+        self, 
+        key, 
+        dictionary: dict
+    ):
+        """
+        Take a dictionary and look for the first instance of the key.
+        """
+
+        if key in dictionary:
+            return dictionary[key]
+        for value in dictionary.values():
+            if isinstance(value, dict):
+                result = self.recursive_dict_search(key, value)
+                if result is not None:
+                    return result
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        result = self.recursive_dict_search(key, item)
+                        if result is not None:
+                            return result
+        return None
+
+
+    def submit_from_script(self, working_directory: str, submit_script: str) -> str | ExitCode:
+        """Submit the submission script to the scheduler.
+
+        :return: return a string with the job ID in a valid format to be used for querying.
+        """
+        flux_id = self._flux_allocation()
+        self.transport.chdir(working_directory)
+        result = self.transport.exec_command_wait(self._get_submit_command(escape_for_bash(submit_script), flux_id))
+        return self._parse_submit_output(*result)
 
     def _get_submit_command(
         self, 
-        submit_script: str
+        submit_script: str,
+        flux_id: str
     ) -> str:
         """
         Return the string to execute the submission script.
@@ -273,21 +391,7 @@ class FluxScheduler(Scheduler):
         :return submit_command: Command used to submit the submission script.
         """
 
-        print(f'{self.parent_pk}')
-
-        submit_command = f"flux batch {submit_script}"
-
-        if self.parent_pk:
-            job_id = self._get_parent_job_id()
-            if job_id:
-                submit_command = f"flux proxy {job_id} " + submit_command
-                # Get jobs inside flux allocation to see if there is a sleep command
-                with self.transport:
-                    retval, stdout, stderr = self.transport.exec_command_wait(f'flux jobs')
-                joblist = self._parse_joblist_output(retval, stdout, stderr)
-                for job in joblist:
-                    if job.job_name == 'sleep':
-                        submit_command += f'; flux proxy {job_id} flux cancel {job.job_id}'               
+        submit_command = f"flux proxy {flux_id} flux batch {submit_script}"              
 
         self.logger.info(f'submitting with : {submit_command}')
 
@@ -307,8 +411,6 @@ class FluxScheduler(Scheduler):
         :param stderr: Error from standard output.
         :return job_id: Job ID from the submitted job.
         """
-
-        print(f'{self.parent_pk}')
 
         if retval != 0:
             self.logger.error(f'Error in _parse_submit_output: {retval=}; {stdout=}; {stderr=}')
@@ -347,8 +449,6 @@ class FluxScheduler(Scheduler):
         :param stderr: Standard error from command.
         :return job_list: List of JobInfo instances for each submitted job.
         """
-
-        print(f'{self.parent_pk}')
 
         num_fields = len(self.fields)
 
