@@ -254,9 +254,8 @@ class FluxScheduler(Scheduler):
         """
         # Get the job name to get parent pk
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')
-        print(result)
-        pk = int(result.split('-')[-1])
+        result = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')[1]
+        pk = int(result.strip('\n').split('-')[-1])
 
         parent = self._get_parent_node(pk)
 
