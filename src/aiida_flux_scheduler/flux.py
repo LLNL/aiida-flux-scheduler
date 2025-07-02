@@ -119,7 +119,6 @@ class FluxScheduler(Scheduler):
         fields['format'] = f"--format '{self._FIELD_SEPARATOR.join(f'{{{field[0]}}}' for field in self.fields)}'"
         comm = command.format_map(fields)
 
-        print(f'{comm=}')
         self.logger.info(f'Checking joblist with {comm}')
 
         return comm
@@ -338,18 +337,16 @@ class FluxScheduler(Scheduler):
                     case 'num_machines':
                         values[key] = f'--nodes={result}'
                     case 'num_mpi_procs_per_machine':
-                        values['num_tasks'] = values['num_machines'] * result
+                        values['num_tasks'] = f'-n {values['num_machines'] * result}'
                     case 'queue_name':
-                        values[key] = result
+                        values[key] = f'-q {result}'
                     case 'max_wallclock_seconds':
-                        values[key] = int(result) + 60
+                        values[key] = f'-t {int(result) + 60}'
                     case 'account':
-                        values[key] = result
-
-        values['parent_pk'] = parent.pk
+                        values[key] = f'-B {result}'
             
         flux_submit = (
-            'flux alloc {parent_pk} {num_machines} {num_tasks} '
+            'flux alloc {num_machines} {num_tasks} '
             '{queue_name} {account} {max_wallclock_seconds}s --bg'
         )
 
