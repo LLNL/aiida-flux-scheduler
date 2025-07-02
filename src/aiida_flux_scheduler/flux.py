@@ -158,11 +158,12 @@ class FluxScheduler(Scheduler):
         if job_tmpl.sched_error_path:
             header.append(f'#flux: --error={job_tmpl.sched_error_path}')
 
-        if job_tmpl.queue_name:
-            header.append(f'#flux: -q {job_tmpl.queue_name}')
+        # When submitting to a flux instance you won't need to have a queue/bank
+        #if job_tmpl.queue_name:
+        #    header.append(f'#flux: -q {job_tmpl.queue_name}')
 
-        if job_tmpl.account:
-            header.append(f'#flux: -B {job_tmpl.account}')
+        #if job_tmpl.account:
+        #    header.append(f'#flux: -B {job_tmpl.account}')
         
         if job_tmpl.priority:
             # Check that the specified value is within the appropriate range.
@@ -365,6 +366,8 @@ class FluxScheduler(Scheduler):
         else:
             flux_id = stdout
 
+        flux_id = flux_id.strip('\n')
+
         return flux_id
 
     def recursive_dict_search(
@@ -405,7 +408,11 @@ class FluxScheduler(Scheduler):
                 flux_id
             )
         )
-        return self._parse_submit_output(*result)
+        child_job_id = self._parse_submit_output(*result)
+
+        total_job_id = f'{flux_id}:{child_job_id}'
+
+        return total_job_id
     
     def get_jobs(
         self,
@@ -429,15 +436,13 @@ class FluxScheduler(Scheduler):
         if jobs:
             joblist = []
             for job in jobs:
-                # Check for parent allocation
-                pk = job.split('-')[-1]
-                parent = self._get_parent_node(pk)
+                flux_id, child_id = job.split(':')
                 with self.transport:
                     retval, stdout, stderr = self.transport.exec_command_wait(
                         self._get_joblist_command(
-                            jobs=[job], 
+                            jobs=[child_id], 
                             user=user,
-                            flux_id=f'aiida-{parent.pk}'
+                            flux_id=flux_id
                         )
                     )
 
