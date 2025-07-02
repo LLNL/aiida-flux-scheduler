@@ -355,7 +355,16 @@ class FluxScheduler(Scheduler):
 
         flux_submit = flux_submit.format_map(values)
 
-        flux_id = self.transport.exec_command_wait(flux_submit)
+        self.logger.info(f'Starting a flux allocation for parent workchain <{parent.pk}> with {flux_submit}')
+
+        retval, stdout, stderr = self.transport.exec_command_wait(flux_submit)
+
+        if retval != 0:
+            self.logger.error(f'Error in _start_allocation {retval=}; {stdout=}; {stderr=}')
+
+            raise SchedulerError(f'Error while starting a flux allocation, {retval=}\{stdout=}\{stderr=}')
+        else:
+            flux_id = stdout
 
         return flux_id
 
