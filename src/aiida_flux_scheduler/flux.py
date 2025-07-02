@@ -460,13 +460,16 @@ class FluxScheduler(Scheduler):
                 )
             joblist = self._parse_joblist_output(retval, stdout, stderr)
 
+        print(f'{joblist=}')
+        for job in joblist:
+            job.job_id = f'{flux_id}:{job.job_id}'
+        print(f'{joblist=}')
+
         if as_dict:
             jobdict = {job.job_id: job for job in joblist}
             if None in jobdict:
                 raise SchedulerError('Found at least one job without jobid')
             return jobdict
-        
-        print(f'{joblist=}')
 
         return joblist
 
