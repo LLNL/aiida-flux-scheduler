@@ -465,6 +465,8 @@ class FluxScheduler(Scheduler):
             if None in jobdict:
                 raise SchedulerError('Found at least one job without jobid')
             return jobdict
+        
+        print(f'{joblist=}')
 
         return joblist
 
