@@ -134,7 +134,9 @@ class FluxScheduler(Scheduler):
         :return comm: Command for detailed job info.
         """
 
-        return f"flux job info {job_id} jobspec"
+        flux_id, child_id = job_id.split(':')
+
+        return f"flux proxy {flux_id} flux job info {child_id} jobspec"
         
     def _get_submit_script_header(
         self, 
