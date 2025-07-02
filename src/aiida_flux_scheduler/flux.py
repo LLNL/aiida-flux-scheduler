@@ -296,7 +296,7 @@ class FluxScheduler(Scheduler):
         active = False
         flux_id = None
         for job in joblist:
-            if parent_pk in job.title:
+            if str(parent_pk) in job.title:
                 active = True
                 flux_id = job.job_id
 
