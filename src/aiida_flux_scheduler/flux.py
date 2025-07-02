@@ -450,7 +450,7 @@ class FluxScheduler(Scheduler):
 
                 single_job = self._parse_joblist_output(retval, stdout, stderr)[0]
                 single_job.job_id = f'{flux_id}:{single_job.job_id}'
-                joblist.append(single_job[0])
+                joblist.append(single_job)
         else:
             with self.transport:
                 retval, stdout, stderr = self.transport.exec_command_wait(
