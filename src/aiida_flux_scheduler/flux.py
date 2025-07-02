@@ -337,7 +337,7 @@ class FluxScheduler(Scheduler):
                     case 'num_machines':
                         values[key] = f'--nodes={result}'
                     case 'num_mpi_procs_per_machine':
-                        values['num_tasks'] = f'-n {values['num_machines'] * result}'
+                        values['num_tasks'] = f'-n {values["num_machines"] * result}'
                     case 'queue_name':
                         values[key] = f'-q {result}'
                     case 'max_wallclock_seconds':
