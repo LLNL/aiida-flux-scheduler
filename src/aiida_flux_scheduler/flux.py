@@ -254,8 +254,14 @@ class FluxScheduler(Scheduler):
         """
         # Get the job name to get parent pk
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')[1]
-        pk = int(result.strip('\n').split('-')[-1])
+
+        retval, stdout, stderr = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')
+
+        if retval != 0:
+            self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
+            raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
+        
+        pk = int(stdout.strip('\n').split('-')[-1])
 
         parent = self._get_parent_node(pk)
 
