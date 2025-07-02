@@ -300,7 +300,7 @@ class FluxScheduler(Scheduler):
                 active = True
                 flux_id = job.job_id
 
-        State = namedtuple('State', [active, flux_id])
+        State = namedtuple('State', ['active', 'flux_id'])
         state = State(active, flux_id)
 
         return state
