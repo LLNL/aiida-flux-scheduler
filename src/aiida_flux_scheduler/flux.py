@@ -84,7 +84,8 @@ class FluxScheduler(Scheduler):
     def _get_joblist_command(
         self, 
         jobs: list[str] | None = None, 
-        user: str | None = None
+        user: str | None = None,
+        flux_id: int | None = None,
     ) -> str:
         """
         Command to report full information on an existing job.
@@ -98,8 +99,11 @@ class FluxScheduler(Scheduler):
 
         fields = defaultdict(str, {})
 
+        if flux_id:
+            fields['flux_id'] = flux_id
+
         if jobs:
-            command = 'flux proxy {job_id} ' + command
+            command = 'flux proxy {flux_id} ' + command
             joblist = []
             if isinstance(jobs, str):
                 joblist = jobs
@@ -115,6 +119,7 @@ class FluxScheduler(Scheduler):
         fields['format'] = f"--format '{self._FIELD_SEPARATOR.join(f'{{{field[0]}}}' for field in self.fields)}'"
         comm = command.format_map(fields)
 
+        print(f'{comm=}')
         self.logger.info(f'Checking joblist with {comm}')
 
         return comm
@@ -386,8 +391,48 @@ class FluxScheduler(Scheduler):
         """
         flux_id = self._flux_allocation(working_directory, submit_script)
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(self._get_submit_command(escape_for_bash(submit_script), flux_id))
+        result = self.transport.exec_command_wait(
+            self._get_submit_command(
+                escape_for_bash(submit_script), 
+                flux_id
+            )
+        )
         return self._parse_submit_output(*result)
+    
+    def get_jobs(
+        self,
+        jobs: list[str] | None = None,
+        user: str | None = None,
+        as_dict: bool = False,
+    ) -> list[JobInfo] | dict[str, JobInfo]:
+        """Return the list of currently active jobs.
+
+        .. note:: typically, only either jobs or user can be specified. See 
+            also comments in `_get_joblist_command`.
+
+        :param list jobs: a list of jobs to check; only these are checked
+        :param str user: a string with a user: only jobs of this user are checked
+        :param list as_dict: if False (default), a list of JobInfo objects 
+            is returned. If True, a dictionary is returned, having as key 
+            the job_id and as value the JobInfo object.
+        :return: list of active jobs
+        """
+        with self.transport:
+            retval, stdout, stderr = self.transport.exec_command_wait(
+                self._get_joblist_command(
+                    jobs=jobs, 
+                    user=user
+                )
+            )
+
+        joblist = self._parse_joblist_output(retval, stdout, stderr)
+        if as_dict:
+            jobdict = {job.job_id: job for job in joblist}
+            if None in jobdict:
+                raise SchedulerError('Found at least one job without jobid')
+            return jobdict
+
+        return joblist
 
     def _get_submit_command(
         self, 
