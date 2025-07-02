@@ -344,9 +344,11 @@ class FluxScheduler(Scheduler):
                         values[key] = f'-t {int(result) + 60}'
                     case 'account':
                         values[key] = f'-B {result}'
+
+        values['job_name'] = f'--job-name=aiida-{parent.pk}'
             
         flux_submit = (
-            'flux alloc {num_machines} {num_tasks} '
+            'flux alloc {job_name} {num_machines} {num_tasks} '
             '{queue_name} {account} {max_wallclock_seconds}s --bg'
         )
 
