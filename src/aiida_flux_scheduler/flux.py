@@ -447,7 +447,7 @@ class FluxScheduler(Scheduler):
             with self.transport:
                 retval, stdout, stderr = self.transport.exec_command_wait(
                     self._get_joblist_command(
-                        jobs=[job], 
+                        jobs=jobs, 
                         user=user
                     )
                 )
