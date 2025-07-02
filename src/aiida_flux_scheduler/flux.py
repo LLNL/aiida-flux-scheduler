@@ -95,7 +95,7 @@ class FluxScheduler(Scheduler):
         :return comm: Command to retrieve full job information.
         """
 
-        command = '"flux jobs {user} {format}"'
+        command = 'flux jobs {user} {format}'
 
         fields = defaultdict(str, {})
 
@@ -103,7 +103,7 @@ class FluxScheduler(Scheduler):
             fields['flux_id'] = flux_id
 
         if jobs:
-            command = 'flux proxy {flux_id} ' + command
+            command = 'flux proxy {flux_id} "' + command + '"'
             joblist = []
             if isinstance(jobs, str):
                 joblist = jobs
