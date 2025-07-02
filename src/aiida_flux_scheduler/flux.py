@@ -426,22 +426,32 @@ class FluxScheduler(Scheduler):
         :return: list of active jobs
         """
 
-        joblist = []
-        for job in jobs:
-            # Check for parent allocation
-            pk = job.split('-')[-1]
-            parent = self._get_parent_node(pk)
+        if jobs:
+            joblist = []
+            for job in jobs:
+                # Check for parent allocation
+                pk = job.split('-')[-1]
+                parent = self._get_parent_node(pk)
+                with self.transport:
+                    retval, stdout, stderr = self.transport.exec_command_wait(
+                        self._get_joblist_command(
+                            jobs=[job], 
+                            user=user,
+                            flux_id=f'aiida-{parent.pk}'
+                        )
+                    )
+
+                single_job = self._parse_joblist_output(retval, stdout, stderr)
+                joblist.append(single_job[0])
+        else:
             with self.transport:
                 retval, stdout, stderr = self.transport.exec_command_wait(
                     self._get_joblist_command(
                         jobs=[job], 
-                        user=user,
-                        flux_id=f'aiida-{parent.pk}'
+                        user=user
                     )
                 )
-
-            single_job = self._parse_joblist_output(retval, stdout, stderr)
-            joblist.append(single_job[0])
+            joblist = self._parse_joblist_output(retval, stdout, stderr)
 
         if as_dict:
             jobdict = {job.job_id: job for job in joblist}
