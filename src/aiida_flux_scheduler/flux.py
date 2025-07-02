@@ -275,7 +275,7 @@ class FluxScheduler(Scheduler):
 
         if not state.active:
             self.logger.info(f'No active flux allocation was found for aiida-{parent.pk}. Starting one now.')
-            flux_id = self._start_allocation(parent, working_directory)
+            flux_id = self._start_allocation(parent)
         elif state.active:
             flux_id = state.flux_id
 
