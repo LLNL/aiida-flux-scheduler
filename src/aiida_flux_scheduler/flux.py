@@ -276,12 +276,12 @@ class FluxScheduler(Scheduler):
         state = self._check_allocation(parent.pk)
 
         if not state.active:
-            self.logger.info(f'No active flux allocation was found for aiida-{parent.pk}. Starting one now.')
+            self.logger.info(f'No flux allocation found for aiida-{parent.pk}. Starting one now.')
             flux_id = self._start_allocation(parent)
         elif state.active:
             flux_id = state.flux_id
 
-        self.logger.info(f'A parent flux allocation for aiida-{parent.pk} was started with flux id: {flux_id}.')
+        self.logger.info(f'Flux instance for <{parent.pk}> is running with flux id: {flux_id}.')
 
         return flux_id
 
