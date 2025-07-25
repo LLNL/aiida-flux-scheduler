@@ -224,7 +224,7 @@ class FluxScheduler(Scheduler):
 
             header.append(f'#flux: -t {time}')
         
-        if job_tmpl.custom_scheduler_commands:
+        if not isinstance(job_tmpl.custom_scheduler_commands, dict):
             header.append(job_tmpl.custom_scheduler_commands)
 
         header = '\n'.join(header)         
@@ -262,13 +262,33 @@ class FluxScheduler(Scheduler):
         # Get the job name to get parent pk
         self.transport.chdir(working_directory)
 
-        retval, stdout, stderr = self.transport.exec_command_wait(f'grep "job-name" {submit_script}')
+        retval, stdout, stderr = self.transport.exec_command_wait(f'grep "#flux" {submit_script}')
 
         if retval != 0:
             self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
             raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
         
-        pk = int(stdout.strip('\n').split('-')[-1])
+        flux_values = {}
+        items = stdout.split('\n')
+        for item in items:
+            item = item.replace('#flux:', '').strip().strip('-')
+            if '=' in item:
+                item = item.split('=')
+            else:
+                item = item.split()
+            flux_values[item[0]] = item[1]
+
+        # Convert walltime to seconds
+        walltime = flux_values['t']
+        if 'd' in walltime:
+            walltime = 86400 * float(walltime.strip('d'))
+        elif 'h' in walltime:
+            walltime = 3600 * float(walltime.strip('h'))
+        elif 'm' in walltime:
+            walltime = 60 * float(walltime.strip('m'))
+        flux_values['t'] = walltime
+
+        pk = int(flux_values['job-name'].split('-')[-1])
 
         parent = self._get_parent_node(pk)
 
@@ -279,7 +299,22 @@ class FluxScheduler(Scheduler):
             self.logger.info(f'No flux allocation found for aiida-{parent.pk}. Starting one now.')
             flux_id = self._start_allocation(parent)
         elif state.active:
-            flux_id = state.flux_id
+            # Check if there is enough walltime left for the job.
+            diff = state.walltime - flux_values['t']
+            if diff < 0:
+                self.logger.info(
+                    'Current job exceeds remaining time. Killing allocation '
+                    'and requesting a new allocation.'
+                )
+                # Kill allocation and start a new one
+                kill_cmd = self._get_kill_command(state.flux_id)
+                retval, stdout, stderr = self.transport.exec_command_wait(kill_cmd)
+                if retval != 0:
+                    self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
+                    raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
+                flux_id = self._start_allocation(parent)
+            else:
+                flux_id = state.flux_id
 
         self.logger.info(f'Flux instance for <{parent.pk}> is running with flux id: {flux_id}.')
 
@@ -295,15 +330,20 @@ class FluxScheduler(Scheduler):
         :param parent_pk: The parent PK of the job being submitted.
         """
         joblist = self.get_jobs()
-        active = False
-        flux_id = None
-        for job in joblist:
-            if str(parent_pk) in job.title:
-                active = True
-                flux_id = job.job_id
+        State = namedtuple(
+            'State', 
+            ['active', 'flux_id', 'walltime'], 
+            defaults=[False, '', 0]
+        )
 
-        State = namedtuple('State', ['active', 'flux_id'])
-        state = State(active, flux_id)
+        state = State()
+        for job in joblist:
+            if str(parent_pk) in job.title: 
+                flux_id = job.job_id
+                total = job.requested_wallclock_time_seconds
+                used = job.wallclock_time_seconds
+                remaining = total - used
+                state = State(True, flux_id, remaining)
 
         return state
 
@@ -317,12 +357,12 @@ class FluxScheduler(Scheduler):
         :param parent_node: AiiDA workflow node of the parent
         :return: Job ID of the Flux instance.
         """
-        if isinstance(parent, WorkChainNode):
-            metadata = parent.get_metadata_inputs()
-        elif isinstance(parent, CalcFunctionNode):
-            metadata = parent.get_options()
+        if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
+            metadata = parent.metadata.options.custom_sched_commands
         else:
             raise TypeError(f'{parent} is not a recognized type for this scheduler.')
+        
+        print(metadata)
         
         keys = {
             'num_machines': True, 
@@ -352,7 +392,7 @@ class FluxScheduler(Scheduler):
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
-            '{queue_name} {account} {max_wallclock_seconds}s --bg'
+            '{queue_name} {account} {max_wallclock_seconds}s -x --bg'
         )
 
         flux_submit = flux_submit.format_map(values)
