@@ -358,7 +358,7 @@ class FluxScheduler(Scheduler):
         :return: Job ID of the Flux instance.
         """
         if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
-            metadata = parent.metadata.options.custom_scheduler_commands
+            metadata = parent.metadata.global_scheduler_info
         else:
             raise TypeError(f'{parent} is not a recognized type for this scheduler.')
         
