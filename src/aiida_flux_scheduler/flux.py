@@ -224,7 +224,7 @@ class FluxScheduler(Scheduler):
 
             header.append(f'#flux: -t {time}')
         
-        if not isinstance(job_tmpl.custom_scheduler_commands, dict):
+        if not isinstance(job_tmpl.custom_scheduler_commands, dict) and job_tmpl.custom_scheduler_commands is not None:
             header.append(job_tmpl.custom_scheduler_commands)
 
         header = '\n'.join(header)         
@@ -269,7 +269,7 @@ class FluxScheduler(Scheduler):
             raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
         
         flux_values = {}
-        items = stdout.split('\n')
+        items = stdout.strip().split('\n')
         for item in items:
             item = item.replace('#flux:', '').strip().strip('-')
             if '=' in item:
@@ -342,7 +342,7 @@ class FluxScheduler(Scheduler):
                 flux_id = job.job_id
                 total = job.requested_wallclock_time_seconds
                 used = job.wallclock_time_seconds
-                remaining = total - used
+                remaining = float(total) - float(used)
                 state = State(True, flux_id, remaining)
 
         return state
@@ -358,7 +358,12 @@ class FluxScheduler(Scheduler):
         :return: Job ID of the Flux instance.
         """
         if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
-            metadata = parent.metadata.global_scheduler_info
+            metadata = parent.get_metadata_inputs()
+            metadata = metadata.get('metadata').get('global_scheduler_info', None)
+            if metadata is None:
+                raise ValueError(
+                    'Currently must specify the global_scheduler_info. Will update in future.'
+                )
         else:
             raise TypeError(f'{parent} is not a recognized type for this scheduler.')
         
