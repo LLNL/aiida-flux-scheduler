@@ -433,54 +433,9 @@ class FluxScheduler(Scheduler):
         computer = self._get_computer_from_transport()
         computer_pk = computer.pk
         threading.Thread(
-            target=lambda: asyncio.run(self._inactivity_watcher(timeout, interval, flux_id, computer_pk)),
+            target=lambda: asyncio.run(_inactivity_watcher(timeout, interval, flux_id, computer_pk)),
             daemon=True
         ).start()
-
-    async def _inactivity_watcher(self, timeout, interval, flux_id, computer_pk):
-        """
-        Will check in on the flux allocation periodically to see if there are
-        still any jobs in the queue. If not, it will kill the allocation.
-
-        :param timeout: Time in seconds before the job is considered done.
-        :param interval: How often to check on the jobs in seconds.
-        :param flux_id: The flux job id of the active allocation.
-        """
-        computer = Computer.collection.get(pk=computer_pk)
-        transport = computer.get_transport()
-        transport.open()
-        idle_time = 0
-        #self.logger.info("Idle watcher started.")
-        while not self._stop_event.is_set():
-            # Check for jobs in allocation (adjust command as needed)
-            retval, stdout, stderr = transport.exec_command_wait(
-                f'flux proxy {flux_id} flux jobs'
-            )
-            job_count = len(stdout.strip().splitlines()) - 2  # skip header
-
-            if job_count > 0:
-                idle_time = 0
-                #self.logger.info(
-                #    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
-                #)
-            else:
-                idle_time += interval
-                #self.logger.info(
-                #    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
-                #)
-
-            if idle_time >= timeout:
-                #self.logger.info(
-                #    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
-                #)
-                # Replace with your allocation kill logic:
-                retval, stdout, stderr = transport.exec_command_wait(
-                    f'flux cancel {flux_id}'
-                )
-                transport.close()
-                break
-
-            await asyncio.sleep(interval)
     
     def stop_inactivity_watcher(self):
         """
@@ -862,3 +817,48 @@ class FluxScheduler(Scheduler):
             #    return CalcJob.exit_codes.ERROR_SCHEDULER_NODE_FAILURE
 
         return None
+    
+async def _inactivity_watcher(timeout, interval, flux_id, computer_pk):
+    """
+    Will check in on the flux allocation periodically to see if there are
+    still any jobs in the queue. If not, it will kill the allocation.
+
+    :param timeout: Time in seconds before the job is considered done.
+    :param interval: How often to check on the jobs in seconds.
+    :param flux_id: The flux job id of the active allocation.
+    """
+    computer = Computer.collection.get(pk=computer_pk)
+    transport = computer.get_transport()
+    transport.open()
+    idle_time = 0
+    #self.logger.info("Idle watcher started.")
+    while True:
+        # Check for jobs in allocation (adjust command as needed)
+        retval, stdout, stderr = transport.exec_command_wait(
+            f'flux proxy {flux_id} flux jobs'
+        )
+        job_count = len(stdout.strip().splitlines()) - 2  # skip header
+
+        if job_count > 0:
+            idle_time = 0
+            #self.logger.info(
+            #    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
+            #)
+        else:
+            idle_time += interval
+            #self.logger.info(
+            #    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
+            #)
+
+        if idle_time >= timeout:
+            #self.logger.info(
+            #    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
+            #)
+            # Replace with your allocation kill logic:
+            retval, stdout, stderr = transport.exec_command_wait(
+                f'flux cancel {flux_id}'
+            )
+            transport.close()
+            break
+
+        await asyncio.sleep(interval)
