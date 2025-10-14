@@ -300,7 +300,7 @@ class FluxScheduler(Scheduler):
         state = self._check_allocation(parent)
 
         if not state.active:
-            self.logger.info(f'No flux allocation found for aiida-{parent.pk}. Starting one now.')
+            self.logger.info(f'No flux allocation found for aiida-{parent}. Starting one now.')
             flux_id = self._start_allocation(parent)
         elif state.active:
             # Check if there is enough walltime left for the job.
@@ -320,7 +320,7 @@ class FluxScheduler(Scheduler):
             else:
                 flux_id = state.flux_id
 
-        self.logger.info(f'Flux instance for <{parent.pk}> is running with flux id: {flux_id}.')
+        self.logger.info(f'Flux instance for <{parent}> is running with flux id: {flux_id}.')
 
         return flux_id
 
@@ -396,7 +396,7 @@ class FluxScheduler(Scheduler):
                     case 'account':
                         values[key] = f'-B {result}'
 
-        values['job_name'] = f'--job-name=aiida-{parent.pk}'
+        values['job_name'] = f'--job-name=aiida-{parent}'
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
