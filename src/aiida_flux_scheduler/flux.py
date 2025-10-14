@@ -430,14 +430,8 @@ class FluxScheduler(Scheduler):
         :param interval: How often to check on the jobs in seconds.
         :param flux_id: The flux job id of the active allocation.
         """
-        def watcher_thread():
-            self.transport.open()
-            try:
-                asyncio.run(self._inactivity_watcher(timeout, interval, flux_id))
-            finally:
-                self.transport.close()
         threading.Thread(
-            target=watcher_thread,
+            target=asyncio.run(self._inactivity_watcher(timeout, interval, flux_id)),
             daemon=True
         ).start()
 
@@ -450,6 +444,7 @@ class FluxScheduler(Scheduler):
         :param interval: How often to check on the jobs in seconds.
         :param flux_id: The flux job id of the active allocation.
         """
+        self.transport.open()
         idle_time = 0
         self.logger.info("Idle watcher started.")
         while not self._stop_event.is_set():
@@ -478,6 +473,7 @@ class FluxScheduler(Scheduler):
                 retval, stdout, stderr = self.transport.exec_command_wait(
                     self._get_kill_command(jobid=flux_id)
                 )
+                self.transport.close()
                 break
 
             await asyncio.sleep(interval)
