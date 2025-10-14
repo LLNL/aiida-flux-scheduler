@@ -488,7 +488,7 @@ class FluxScheduler(Scheduler):
 
     def _get_computer_from_transport(self):
         for computer in Computer.objects.all():
-            if self.transport._hostname == computer.hostname:
+            if self.transport.hostname == computer.hostname:
                 return computer
         return None
 
