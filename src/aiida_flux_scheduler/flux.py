@@ -431,7 +431,7 @@ class FluxScheduler(Scheduler):
         :param flux_id: The flux job id of the active allocation.
         """
         threading.Thread(
-            target=asyncio.run(self._inactivity_watcher(timeout, interval, flux_id)),
+            target=lambda: asyncio.run(self._inactivity_watcher(timeout, interval, flux_id)),
             daemon=True
         ).start()
 
