@@ -271,7 +271,7 @@ class FluxScheduler(Scheduler):
 
         if retval != 0:
             self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
-            raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
+            raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
         
         flux_values = {}
         items = stdout.strip().split('\n')
@@ -316,7 +316,7 @@ class FluxScheduler(Scheduler):
                 retval, stdout, stderr = self.transport.exec_command_wait(kill_cmd)
                 if retval != 0:
                     self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
-                    raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
+                    raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
                 flux_id = self._start_allocation(parent)
             else:
                 flux_id = state.flux_id
@@ -412,7 +412,7 @@ class FluxScheduler(Scheduler):
         if retval != 0:
             self.logger.error(f'Error in _start_allocation {retval=}; {stdout=}; {stderr=}')
 
-            raise SchedulerError(f'Error while starting a flux allocation, {retval=}\{stdout=}\{stderr=}')
+            raise SchedulerError(f'Error while starting a flux allocation, {retval=}\n{stdout=}\n{stderr=}')
         else:
             flux_id = stdout
 
@@ -444,7 +444,6 @@ class FluxScheduler(Scheduler):
         :param interval: How often to check on the jobs in seconds.
         :param flux_id: The flux job id of the active allocation.
         """
-        self.transport.open()
         idle_time = 0
         self.logger.info("Idle watcher started.")
         while not self._stop_event.is_set():
@@ -473,7 +472,6 @@ class FluxScheduler(Scheduler):
                 retval, stdout, stderr = self.transport.exec_command_wait(
                     self._get_kill_command(jobid=flux_id)
                 )
-                self.transport.close()
                 break
 
             await asyncio.sleep(interval)
@@ -618,7 +616,7 @@ class FluxScheduler(Scheduler):
         if retval != 0:
             self.logger.error(f'Error in _parse_submit_output: {retval=}; {stdout=}; {stderr=}')
 
-            raise SchedulerError(f'Error during submission, {retval=}\{stdout=}\{stderr=}')
+            raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
 
         try:
             transport_string = f' for {self.transport}'
