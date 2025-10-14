@@ -13,7 +13,6 @@ from aiida.common.escaping import escape_for_bash
 from aiida.orm import WorkChainNode, CalcFunctionNode
 import asyncio
 import threading
-import time
 import json
 import datetime
 from collections import defaultdict, namedtuple
@@ -251,7 +250,7 @@ class FluxScheduler(Scheduler):
         while parent.caller:
             parent = parent.caller
 
-        return parent
+        return parent.pk
     
     def _flux_allocation(
         self,
@@ -298,7 +297,7 @@ class FluxScheduler(Scheduler):
         parent = self._get_parent_node(pk)
 
         # Based on the parent_pk, see if there is an active flux allocation.
-        state = self._check_allocation(parent.pk)
+        state = self._check_allocation(parent)
 
         if not state.active:
             self.logger.info(f'No flux allocation found for aiida-{parent.pk}. Starting one now.')
@@ -359,9 +358,10 @@ class FluxScheduler(Scheduler):
         """
         Start a flux allocation based on the job submission script in the working directory.
 
-        :param parent_node: AiiDA workflow node of the parent
+        :param parent: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
+        parent = load_node(parent)
         if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
             metadata = parent.get_metadata_inputs()
             metadata = metadata.get('metadata').get('global_scheduler_info', None)
@@ -418,7 +418,7 @@ class FluxScheduler(Scheduler):
 
         flux_id = flux_id.strip('\n')
 
-        self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
+        #self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
 
         return flux_id
 
@@ -431,13 +431,13 @@ class FluxScheduler(Scheduler):
         :param flux_id: The flux job id of the active allocation.
         """
         computer = self._get_computer_from_transport()
-        computer_id = computer.id
+        computer_pk = computer.pk
         threading.Thread(
-            target=lambda: asyncio.run(self._inactivity_watcher(timeout, interval, flux_id, computer_id)),
+            target=lambda: asyncio.run(self._inactivity_watcher(timeout, interval, flux_id, computer_pk)),
             daemon=True
         ).start()
 
-    async def _inactivity_watcher(self, timeout, interval, flux_id, computer_id):
+    async def _inactivity_watcher(self, timeout, interval, flux_id, computer_pk):
         """
         Will check in on the flux allocation periodically to see if there are
         still any jobs in the queue. If not, it will kill the allocation.
@@ -446,7 +446,7 @@ class FluxScheduler(Scheduler):
         :param interval: How often to check on the jobs in seconds.
         :param flux_id: The flux job id of the active allocation.
         """
-        computer = Computer.collection.get(id=computer_id)
+        computer = Computer.collection.get(pk=computer_pk)
         transport = computer.get_transport()
         transport.open()
         idle_time = 0
