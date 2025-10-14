@@ -235,7 +235,7 @@ class FluxScheduler(Scheduler):
 
         return header
     
-    def _get_parent_node(
+    def _get_parent_pk(
             self, 
             pk: int
         ) -> int:
