@@ -3,6 +3,7 @@ Plugin for Flux.
 """
 
 from typing import Any
+from aiida.manage.configuration import load_profile
 from aiida.orm import load_node, Computer
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
@@ -827,6 +828,7 @@ async def _inactivity_watcher(timeout, interval, flux_id, computer_pk):
     :param interval: How often to check on the jobs in seconds.
     :param flux_id: The flux job id of the active allocation.
     """
+    load_profile()
     computer = Computer.collection.get(pk=computer_pk)
     transport = computer.get_transport()
     transport.open()
