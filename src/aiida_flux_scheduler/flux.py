@@ -450,7 +450,7 @@ class FluxScheduler(Scheduler):
         transport = computer.get_transport()
         transport.open()
         idle_time = 0
-        self.logger.info("Idle watcher started.")
+        #self.logger.info("Idle watcher started.")
         while not self._stop_event.is_set():
             # Check for jobs in allocation (adjust command as needed)
             retval, stdout, stderr = transport.exec_command_wait(
@@ -460,19 +460,19 @@ class FluxScheduler(Scheduler):
 
             if job_count > 0:
                 idle_time = 0
-                self.logger.info(
-                    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
-                )
+                #self.logger.info(
+                #    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
+                #)
             else:
                 idle_time += interval
-                self.logger.info(
-                    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
-                )
+                #self.logger.info(
+                #    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
+                #)
 
             if idle_time >= timeout:
-                self.logger.info(
-                    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
-                )
+                #self.logger.info(
+                #    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
+                #)
                 # Replace with your allocation kill logic:
                 retval, stdout, stderr = transport.exec_command_wait(
                     self._get_kill_command(jobid=flux_id)
