@@ -454,7 +454,7 @@ class FluxScheduler(Scheduler):
         while not self._stop_event.is_set():
             # Check for jobs in allocation (adjust command as needed)
             retval, stdout, stderr = transport.exec_command_wait(
-                self._get_joblist_command(flux_id=flux_id)
+                f'flux proxy {flux_id} flux jobs'
             )
             job_count = len(stdout.strip().splitlines()) - 2  # skip header
 
@@ -475,7 +475,7 @@ class FluxScheduler(Scheduler):
                 #)
                 # Replace with your allocation kill logic:
                 retval, stdout, stderr = transport.exec_command_wait(
-                    self._get_kill_command(jobid=flux_id)
+                    f'flux cancel {flux_id}'
                 )
                 transport.close()
                 break
