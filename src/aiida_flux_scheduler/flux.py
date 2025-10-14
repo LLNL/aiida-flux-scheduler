@@ -294,14 +294,14 @@ class FluxScheduler(Scheduler):
 
         pk = int(flux_values['job-name'].split('-')[-1])
 
-        parent = self._get_parent_node(pk)
+        parent_pk = self._get_parent_pk(pk)
 
         # Based on the parent_pk, see if there is an active flux allocation.
-        state = self._check_allocation(parent)
+        state = self._check_allocation(parent_pk)
 
         if not state.active:
-            self.logger.info(f'No flux allocation found for aiida-{parent}. Starting one now.')
-            flux_id = self._start_allocation(parent)
+            self.logger.info(f'No flux allocation found for aiida-{parent_pk}. Starting one now.')
+            flux_id = self._start_allocation(parent_pk)
         elif state.active:
             # Check if there is enough walltime left for the job.
             diff = state.walltime - flux_values['t']
@@ -316,11 +316,11 @@ class FluxScheduler(Scheduler):
                 if retval != 0:
                     self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
                     raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
-                flux_id = self._start_allocation(parent)
+                flux_id = self._start_allocation(parent_pk)
             else:
                 flux_id = state.flux_id
 
-        self.logger.info(f'Flux instance for <{parent}> is running with flux id: {flux_id}.')
+        self.logger.info(f'Flux instance for <{parent_pk}> is running with flux id: {flux_id}.')
 
         return flux_id
 
@@ -353,7 +353,7 @@ class FluxScheduler(Scheduler):
 
     def _start_allocation(
         self,
-        parent
+        parent_pk
     ) -> str:
         """
         Start a flux allocation based on the job submission script in the working directory.
@@ -361,7 +361,7 @@ class FluxScheduler(Scheduler):
         :param parent: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
-        parent = load_node(parent)
+        parent = load_node(parent_pk)
         if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
             metadata = parent.get_metadata_inputs()
             metadata = metadata.get('metadata').get('global_scheduler_info', None)
@@ -396,7 +396,7 @@ class FluxScheduler(Scheduler):
                     case 'account':
                         values[key] = f'-B {result}'
 
-        values['job_name'] = f'--job-name=aiida-{parent}'
+        values['job_name'] = f'--job-name=aiida-{parent.pk}'
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
