@@ -3,15 +3,13 @@ Plugin for Flux.
 """
 
 from typing import Any
-from aiida.manage.configuration import load_profile
-from aiida.orm import load_node, Computer
+from aiida.orm import load_node, Computer, WorkChainNode, CalcFunctionNode
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
 from aiida.schedulers import Scheduler, SchedulerError
 from aiida.schedulers.datastructures import JobInfo, JobState, JobTemplate, NodeNumberJobResource
 from aiida.common.extendeddicts import AttributeDict
 from aiida.common.escaping import escape_for_bash
-from aiida.orm import WorkChainNode, CalcFunctionNode
 import asyncio
 import threading
 import json
@@ -828,39 +826,45 @@ async def _inactivity_watcher(timeout, interval, flux_id, computer_pk):
     :param interval: How often to check on the jobs in seconds.
     :param flux_id: The flux job id of the active allocation.
     """
-    load_profile()
-    computer = Computer.collection.get(pk=computer_pk)
-    transport = computer.get_transport()
-    transport.open()
-    idle_time = 0
-    #self.logger.info("Idle watcher started.")
-    while True:
-        # Check for jobs in allocation (adjust command as needed)
-        retval, stdout, stderr = transport.exec_command_wait(
-            f'flux proxy {flux_id} flux jobs'
-        )
-        job_count = len(stdout.strip().splitlines()) - 2  # skip header
-
-        if job_count > 0:
-            idle_time = 0
-            #self.logger.info(
-            #    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
-            #)
-        else:
-            idle_time += interval
-            #self.logger.info(
-            #    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
-            #)
-
-        if idle_time >= timeout:
-            #self.logger.info(
-            #    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
-            #)
-            # Replace with your allocation kill logic:
+    from aiida.manage.configuration import load_profile
+    import traceback
+    try:
+        load_profile()
+        computer = Computer.collection.get(pk=computer_pk)
+        transport = computer.get_transport()
+        transport.open()
+        idle_time = 0
+        #self.logger.info("Idle watcher started.")
+        while True:
+            # Check for jobs in allocation (adjust command as needed)
             retval, stdout, stderr = transport.exec_command_wait(
-                f'flux cancel {flux_id}'
+                f'flux proxy {flux_id} flux jobs'
             )
-            transport.close()
-            break
+            job_count = len(stdout.strip().splitlines()) - 2  # skip header
 
-        await asyncio.sleep(interval)
+            if job_count > 0:
+                idle_time = 0
+                #self.logger.info(
+                #    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
+                #)
+            else:
+                idle_time += interval
+                #self.logger.info(
+                #    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
+                #)
+
+            if idle_time >= timeout:
+                #self.logger.info(
+                #    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
+                #)
+                # Replace with your allocation kill logic:
+                retval, stdout, stderr = transport.exec_command_wait(
+                    f'flux cancel {flux_id}'
+                )
+                transport.close()
+                break
+
+            await asyncio.sleep(interval)
+    except Exception as e:
+        print("Exception in inactivity watcher:", e)
+        print(traceback.format_exc())
