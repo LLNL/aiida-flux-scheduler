@@ -11,9 +11,10 @@ from aiida.schedulers.datastructures import JobInfo, JobState, JobTemplate, Node
 from aiida.common.extendeddicts import AttributeDict
 from aiida.common.escaping import escape_for_bash
 from aiida.orm import WorkChainNode, CalcFunctionNode
-import re
+import asyncio
+import threading
+import time
 import json
-import string
 import datetime
 from collections import defaultdict, namedtuple
 
@@ -81,17 +82,21 @@ class FluxScheduler(Scheduler):
         # 14.03.7 and later
     ]
 
+    def __init__(self):
+        self._stop_event = threading.Event()
+
     def _get_joblist_command(
         self, 
         jobs: list[str] | None = None, 
         user: str | None = None,
-        flux_id: int | None = None,
+        flux_id: str | None = None,
     ) -> str:
         """
         Command to report full information on an existing job.
 
         :param jobs: List of job ids.
         :param user: Username for the job queue.
+        :param flux_id: Job ID of the active flux allocation to be used for the proxy command.
         :return comm: Command to retrieve full job information.
         """
 
@@ -367,8 +372,6 @@ class FluxScheduler(Scheduler):
         else:
             raise TypeError(f'{parent} is not a recognized type for this scheduler.')
         
-        print(metadata)
-        
         keys = {
             'num_machines': True, 
             'num_mpi_procs_per_machine': True, 
@@ -415,7 +418,69 @@ class FluxScheduler(Scheduler):
 
         flux_id = flux_id.strip('\n')
 
+        self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
+
         return flux_id
+
+    def start_inactivity_watcher(self, timeout, interval, flux_id):
+        """
+        Start the asynchronous inactivity watcher in a background thread.
+
+        :param timeout: Time in seconds before the job is considered done.
+        :param interval: How often to check on the jobs in seconds.
+        :param flux_id: The flux job id of the active allocation.
+        """
+        threading.Thread(
+            target=lambda: asyncio.run(self._inactivity_watcher(timeout, interval, flux_id)),
+            daemon=True
+        ).start()
+
+    async def _inactivity_watcher(self, timeout, interval, flux_id):
+        """
+        Will check in on the flux allocation periodically to see if there are
+        still any jobs in the queue. If not, it will kill the allocation.
+
+        :param timeout: Time in seconds before the job is considered done.
+        :param interval: How often to check on the jobs in seconds.
+        :param flux_id: The flux job id of the active allocation.
+        """
+        idle_time = 0
+        self.logger.info("Idle watcher started.")
+        while not self._stop_event.is_set():
+            # Check for jobs in allocation (adjust command as needed)
+            retval, stdout, stderr = self.transport.exec_command_wait(
+                self._get_joblist_command(flux_id=flux_id)
+            )
+            job_count = len(stdout.strip().splitlines()) - 2  # skip header
+
+            if job_count > 0:
+                idle_time = 0
+                self.logger.info(
+                    f"Flux ID: {flux_id}, Jobs running: {job_count}. Resetting idle timer."
+                )
+            else:
+                idle_time += interval
+                self.logger.info(
+                    f"No jobs for Flux ID: {flux_id}. Idle for {idle_time} seconds."
+                )
+
+            if idle_time >= timeout:
+                self.logger.info(
+                    f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
+                )
+                # Replace with your allocation kill logic:
+                retval, stdout, stderr = self.transport.exec_command_wait(
+                    self._get_kill_command(jobid=flux_id)
+                )
+                break
+
+            await asyncio.sleep(interval)
+    
+    def stop_inactivity_watcher(self):
+        """
+        Function to kill the inactivity watcher.
+        """
+        self._stop_event.set()
 
     def recursive_dict_search(
         self, 
