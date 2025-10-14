@@ -418,7 +418,7 @@ class FluxScheduler(Scheduler):
 
         flux_id = flux_id.strip('\n')
 
-        #self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
+        self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
 
         return flux_id
 
