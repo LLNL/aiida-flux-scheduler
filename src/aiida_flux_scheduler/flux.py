@@ -3,7 +3,7 @@ Plugin for Flux.
 """
 
 from typing import Any
-from aiida.orm import load_node
+from aiida.orm import load_node, Computer
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
 from aiida.schedulers import Scheduler, SchedulerError
@@ -444,12 +444,14 @@ class FluxScheduler(Scheduler):
         :param interval: How often to check on the jobs in seconds.
         :param flux_id: The flux job id of the active allocation.
         """
-        self.transport.open()
+        computer = self._get_computer_from_transport()
+        transport = computer.get_transport()
+        transport.open()
         idle_time = 0
         self.logger.info("Idle watcher started.")
         while not self._stop_event.is_set():
             # Check for jobs in allocation (adjust command as needed)
-            retval, stdout, stderr = self.transport.exec_command_wait(
+            retval, stdout, stderr = transport.exec_command_wait(
                 self._get_joblist_command(flux_id=flux_id)
             )
             job_count = len(stdout.strip().splitlines()) - 2  # skip header
@@ -470,10 +472,10 @@ class FluxScheduler(Scheduler):
                     f"Idle timeout reached for Flux ID: {flux_id}. Killing allocation."
                 )
                 # Replace with your allocation kill logic:
-                retval, stdout, stderr = self.transport.exec_command_wait(
+                retval, stdout, stderr = transport.exec_command_wait(
                     self._get_kill_command(jobid=flux_id)
                 )
-                self.transport.close()
+                transport.close()
                 break
 
             await asyncio.sleep(interval)
@@ -483,6 +485,12 @@ class FluxScheduler(Scheduler):
         Function to kill the inactivity watcher.
         """
         self._stop_event.set()
+
+    def _get_computer_from_transport(self):
+        for computer in Computer.objects.all():
+            if self.transport._hostname == computer.hostname:
+                return computer
+        return None
 
     def recursive_dict_search(
         self, 
