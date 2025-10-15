@@ -295,7 +295,7 @@ class FluxScheduler(Scheduler):
 
         if not state.active:
             self.logger.info(f'No flux allocation found for aiida-{parent_pk}. Starting one now.')
-            flux_id = self._start_allocation(parent_pk)
+            flux_id = self._start_allocation(pk, parent_pk)
         elif state.active:
             # Check if there is enough walltime left for the job.
             diff = state.walltime - flux_values['t']
@@ -347,24 +347,27 @@ class FluxScheduler(Scheduler):
 
     def _start_allocation(
         self,
+        pk,
         parent_pk
     ) -> str:
         """
         Start a flux allocation based on the job submission script in the working directory.
 
-        :param parent: AiiDA pk of parent.
+        :param pk: AiiDA pk of the current calcjob.
+        :param parent_pk: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
-        parent = load_node(parent_pk)
-        if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
-            metadata = parent.get_metadata_inputs()
-            metadata = metadata.get('metadata').get('global_scheduler_info', None)
-            if metadata is None:
+        node = load_node(pk)
+        if isinstance(node, CalcFunctionNode):
+            metadata = node.get_metadata_inputs()
+            options = metadata.get('metadata').get('options')
+            annotations = options.get('annotations', None)
+            if annotations is None:
                 raise ValueError(
-                    'Currently must specify the global_scheduler_info. Will update in future.'
+                    'Currently must specify `annotations` in the metadata options. Will update in future.'
                 )
         else:
-            raise TypeError(f'{parent} is not a recognized type for this scheduler.')
+            raise TypeError(f'{node} is not a recognized type for this scheduler.')
         
         keys = {
             'num_machines': True, 
@@ -376,7 +379,7 @@ class FluxScheduler(Scheduler):
 
         values = defaultdict(str, {})
         for key in keys:
-            result = self.recursive_dict_search(key, metadata)
+            result = self.recursive_dict_search(key, annotations)
             if result:
                 match key:
                     case 'num_machines':
@@ -390,7 +393,7 @@ class FluxScheduler(Scheduler):
                     case 'account':
                         values[key] = f'-B {result}'
 
-        values['job_name'] = f'--job-name=aiida-{parent.pk}'
+        values['job_name'] = f'--job-name=aiida-{parent_pk}'
 
         values['watcher'] = "bash -c 'while true; do sleep 60; if [ $(flux jobs --since=-5m | wc -l) -gt 1 ]; then continue; else exit; fi; done'"
             
@@ -401,7 +404,7 @@ class FluxScheduler(Scheduler):
 
         flux_submit = flux_submit.format_map(values)
 
-        self.logger.info(f'Starting a flux allocation for parent workchain <{parent.pk}> with {flux_submit}')
+        self.logger.info(f'Starting a flux allocation for parent workchain <{parent_pk}> with {flux_submit}')
 
         retval, stdout, stderr = self.transport.exec_command_wait(flux_submit)
 
