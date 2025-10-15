@@ -10,8 +10,6 @@ from aiida.schedulers import Scheduler, SchedulerError
 from aiida.schedulers.datastructures import JobInfo, JobState, JobTemplate, NodeNumberJobResource
 from aiida.common.extendeddicts import AttributeDict
 from aiida.common.escaping import escape_for_bash
-import asyncio
-import threading
 import json
 import datetime
 from collections import defaultdict, namedtuple
@@ -79,9 +77,6 @@ class FluxScheduler(Scheduler):
         ('t_submit', 'submission_time'),  # This is probably new, it exists in version
         # 14.03.7 and later
     ]
-
-    def __init__(self):
-        self._stop_event = threading.Event()
 
     def _get_joblist_command(
         self, 
@@ -418,8 +413,6 @@ class FluxScheduler(Scheduler):
             flux_id = stdout
 
         flux_id = flux_id.strip('\n')
-
-        self.start_inactivity_watcher(timeout=300, interval=30, flux_id=flux_id)
 
         return flux_id
 
