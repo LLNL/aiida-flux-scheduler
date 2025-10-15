@@ -361,16 +361,16 @@ class FluxScheduler(Scheduler):
         if isinstance(node, CalcFunctionNode):
             metadata = node.get_metadata_inputs()
             options = metadata.get('metadata').get('options')
-            annotations = options.get('annotations', None)
-            if annotations is None or annotations is not str:
+            annotation = options.get('annotation', None)
+            if annotation is None or annotation is not str:
                 raise ValueError(
                     'Currently must specify `annotations` in the metadata options as a string with flux allocation requirements.'
                 )
             try:
-                annotations = json.loads(annotations)
+                annotation = json.loads(annotation)
             except TypeError:
                 raise TypeError(
-                    f'{annotations} is not in the correct format.'
+                    f'{annotation} is not in the correct format.'
                 )
         else:
             raise TypeError(f'{node} is not a recognized type for this scheduler.')
@@ -385,7 +385,7 @@ class FluxScheduler(Scheduler):
 
         values = defaultdict(str, {})
         for key in keys:
-            result = self.recursive_dict_search(key, annotations)
+            result = self.recursive_dict_search(key, annotation)
             if result:
                 match key:
                     case 'num_machines':
