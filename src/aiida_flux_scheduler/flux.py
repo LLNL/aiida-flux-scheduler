@@ -366,6 +366,12 @@ class FluxScheduler(Scheduler):
                 raise ValueError(
                     'Currently must specify `annotations` in the metadata options. Will update in future.'
                 )
+            try:
+                annotations = json.loads(annotations)
+            except TypeError:
+                raise TypeError(
+                    f'{annotations} is not in the correct format.'
+                )
         else:
             raise TypeError(f'{node} is not a recognized type for this scheduler.')
         
