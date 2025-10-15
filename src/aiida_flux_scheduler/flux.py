@@ -396,10 +396,12 @@ class FluxScheduler(Scheduler):
                         values[key] = f'-B {result}'
 
         values['job_name'] = f'--job-name=aiida-{parent.pk}'
+
+        values['watcher'] = "bash -c 'while true; do sleep 60; if [ $(flux jobs --since=-5m | wc -l) -gt 1 ]; then continue; else exit; fi; done'"
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
-            '{queue_name} {account} {max_wallclock_seconds}s -x --bg'
+            '{queue_name} {account} {max_wallclock_seconds}s -x --bg {watcher}'
         )
 
         flux_submit = flux_submit.format_map(values)
