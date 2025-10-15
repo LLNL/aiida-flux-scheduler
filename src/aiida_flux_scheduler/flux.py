@@ -362,9 +362,9 @@ class FluxScheduler(Scheduler):
             metadata = node.get_metadata_inputs()
             options = metadata.get('metadata').get('options')
             annotations = options.get('annotations', None)
-            if annotations is None:
+            if annotations is None or annotations is not str:
                 raise ValueError(
-                    'Currently must specify `annotations` in the metadata options. Will update in future.'
+                    'Currently must specify `annotations` in the metadata options as a string with flux allocation requirements.'
                 )
             try:
                 annotations = json.loads(annotations)
