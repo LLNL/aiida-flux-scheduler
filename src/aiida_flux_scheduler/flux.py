@@ -353,11 +353,11 @@ class FluxScheduler(Scheduler):
         """
         Start a flux allocation based on the job submission script in the working directory.
 
-        :param pk: AiiDA pk of the current calcjob.
+        :param pk: AiiDA pk of the current
         :param parent_pk: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
-        parent = load_node(pk)
+        parent = load_node(parent_pk)
         if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
             metadata = parent.get_metadata_inputs()
             metadata = metadata.get('metadata').get('global_scheduler_info', None)
