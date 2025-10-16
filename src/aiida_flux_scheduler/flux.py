@@ -222,7 +222,7 @@ class FluxScheduler(Scheduler):
 
             header.append(f'#flux: -t {time}')
         
-        if not isinstance(job_tmpl.custom_scheduler_commands, dict) and job_tmpl.custom_scheduler_commands is not None:
+        if isinstance(job_tmpl.custom_scheduler_commands, str) and job_tmpl.custom_scheduler_commands is not None:
             header.append(job_tmpl.custom_scheduler_commands)
 
         header = '\n'.join(header)         
@@ -357,28 +357,28 @@ class FluxScheduler(Scheduler):
         :param parent_pk: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
-        parent = load_node(parent_pk)
-        if isinstance(parent, WorkChainNode) or isinstance(parent, CalcFunctionNode):
-            metadata = parent.get_metadata_inputs()
-            metadata = metadata.get('metadata').get('global_scheduler_info', None)
-            if metadata is None:
+        node = load_node(pk)
+        if (node, CalcFunctionNode):
+            metadata = node.get_metadata_inputs()
+            options = metadata.get('options', {})
+            flux = options.get('persistent_resources')
+            if flux is None:
                 raise ValueError(
-                    'Currently must specify the global_scheduler_info. Will update in future.'
+                    'Must specify `metadata.options.persistent_resources` to fully utilize the Flux scheduler.'
                 )
         else:
-            raise TypeError(f'{parent} is not a recognized type for this scheduler.')
+            raise TypeError(f'{node} is not a recognized type for this scheduler.')
         
         keys = {
             'num_machines': True, 
             'num_mpi_procs_per_machine': True, 
             'queue_name': True, 
-            'max_wallclock_seconds': True, 
-            'account': False
+            'max_wallclock_seconds': True
         }
 
         values = defaultdict(str, {})
         for key in keys:
-            result = self.recursive_dict_search(key, metadata)
+            result = self.recursive_dict_search(key, flux)
             if result:
                 match key:
                     case 'num_machines':
@@ -389,12 +389,12 @@ class FluxScheduler(Scheduler):
                         values[key] = f'-q {result}'
                     case 'max_wallclock_seconds':
                         values[key] = f'-t {int(result) + 60}'
-                    case 'account':
-                        values[key] = f'-B {result}'
 
-        values['job_name'] = f'--job-name=aiida-{parent.pk}'
+        values['job_name'] = f'--job-name=aiida-{parent_pk}'
 
-        values['watcher'] = "bash -c 'while true; do sleep 60; if [ $(flux jobs --since=-5m | wc -l) -gt 1 ]; then continue; else exit; fi; done'"
+        timeout = flux.get('timeout', '5m')
+
+        values['watcher'] = f"bash -c 'while true; do sleep 60; if [ $(flux jobs --since=-{timeout} | wc -l) -gt 1 ]; then continue; else exit; fi; done'"
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
@@ -403,7 +403,7 @@ class FluxScheduler(Scheduler):
 
         flux_submit = flux_submit.format_map(values)
 
-        self.logger.info(f'Starting a flux allocation for parent workchain <{parent.pk}> with {flux_submit}')
+        self.logger.info(f'Starting a flux allocation for parent workchain <{parent_pk}> with {flux_submit}')
 
         retval, stdout, stderr = self.transport.exec_command_wait(flux_submit)
 
