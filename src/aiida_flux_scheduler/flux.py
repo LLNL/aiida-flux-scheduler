@@ -361,7 +361,8 @@ class FluxScheduler(Scheduler):
         if (node, CalcFunctionNode):
             metadata = node.get_metadata_inputs()
             options = metadata.get('options', {})
-            flux = options.get('persistent_resources')
+            resources = options.get('resources', {})
+            flux = options.get('persistent_resources', None)
             if flux is None:
                 raise ValueError(
                     'Must specify `metadata.options.persistent_resources` to fully utilize the Flux scheduler.'
@@ -369,26 +370,30 @@ class FluxScheduler(Scheduler):
         else:
             raise TypeError(f'{node} is not a recognized type for this scheduler.')
         
-        keys = {
-            'num_machines': True, 
-            'num_mpi_procs_per_machine': True, 
-            'queue_name': True, 
-            'max_wallclock_seconds': True
-        }
+        keys = (
+            'num_machines',
+            'num_mpi_procs_per_machine',
+            'queue_name',
+            'max_wallclock_seconds',
+            'account'
+        )
 
         values = defaultdict(str, {})
-        for key in keys:
-            result = self.recursive_dict_search(key, flux)
-            if result:
-                match key:
-                    case 'num_machines':
-                        values[key] = f'--nodes={result}'
-                    case 'num_mpi_procs_per_machine':
-                        values['num_tasks'] = f'-n {values["num_machines"] * result}'
-                    case 'queue_name':
-                        values[key] = f'-q {result}'
-                    case 'max_wallclock_seconds':
-                        values[key] = f'-t {int(result) + 60}'
+        for resource in [resources, flux]:
+            for key in keys:
+                result = self.recursive_dict_search(key, resource)
+                if result:
+                    match key:
+                        case 'num_machines':
+                            values[key] = f'--nodes={result}'
+                        case 'num_mpi_procs_per_machine':
+                            values['num_tasks'] = f'-n {values["num_machines"] * result}'
+                        case 'queue_name':
+                            values[key] = f'-q {result}'
+                        case 'max_wallclock_seconds':
+                            values[key] = f'-t {int(result)}s'
+                        case 'account':
+                            values[key] = f'-B {result}'
 
         values['job_name'] = f'--job-name=aiida-{parent_pk}'
 
@@ -398,7 +403,7 @@ class FluxScheduler(Scheduler):
             
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
-            '{queue_name} {account} {max_wallclock_seconds}s -x --bg {watcher}'
+            '{queue_name} {account} {max_wallclock_seconds} -x --bg {watcher}'
         )
 
         flux_submit = flux_submit.format_map(values)
