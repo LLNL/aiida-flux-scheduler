@@ -472,27 +472,6 @@ class FluxScheduler(Scheduler):
                         if result is not None:
                             return result
         return None
-
-
-    def submit_from_script(self, working_directory: str, submit_script: str) -> str | ExitCode:
-        """Submit the submission script to the scheduler.
-
-        :return: return a string with the job ID in a valid format to be used for querying.
-        """
-        pk = self._parse_pk(working_directory, submit_script)
-        flux_id = self._flux_allocation(pk)
-        self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(
-            self._get_submit_command(
-                escape_for_bash(submit_script), 
-                flux_id
-            )
-        )
-        child_job_id = self._parse_submit_output(*result)
-
-        total_job_id = f'{flux_id}:{child_job_id}'
-
-        return total_job_id
     
     def get_jobs(
         self,
@@ -579,15 +558,19 @@ class FluxScheduler(Scheduler):
         """
 
         pk = self._parse_pk(working_directory, submit_script)
-        parent_pk = self._get_parent_pk(pk)
-
+        flux_id = self._flux_allocation(pk)
         self.transport.chdir(working_directory)
         result = self.transport.exec_command_wait(
-            self._get_submit_command(submit_script, parent_pk)
+            self._get_submit_command(
+                escape_for_bash(submit_script), 
+                flux_id
+            )
         )
-        
-        return self._parse_submit_output(*result)
-        
+        child_job_id = self._parse_submit_output(*result)
+
+        total_job_id = f'{flux_id}:{child_job_id}'
+
+        return total_job_id        
     
     def _parse_submit_output(
         self, 
