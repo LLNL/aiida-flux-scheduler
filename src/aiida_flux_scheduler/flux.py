@@ -43,6 +43,8 @@ class FluxJobResource(NodeNumberJobResource):
         :return: attribute dictionary with the parsed parameters populated.
         """
 
+        print(f"{kwargs=}")
+
         mws = kwargs.pop('max_wallclock_seconds', None)
         try:
             mws = int(mws)
