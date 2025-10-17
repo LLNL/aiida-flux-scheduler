@@ -3,7 +3,7 @@ Plugin for Flux.
 """
 
 from typing import Any
-from aiida.orm import load_node, Computer, WorkChainNode, CalcFunctionNode
+from aiida.orm import load_node, CalcFunctionNode
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
 from aiida.schedulers import Scheduler, SchedulerError
@@ -246,18 +246,19 @@ class FluxScheduler(Scheduler):
 
         return parent.pk
     
-    def _flux_allocation(
+    def _parse_pk(
         self,
         working_directory: str,
-        submit_script: str
-    ):
+        submit_script: str,
+    ) -> int:
         """
-        Start a flux allocation to submit jobs.
+        Parse the AiiDA PK from the job submission script.
 
         :param working_directory: Path to the working directory on remote machine.
         :param submit_script: Name of the submission script.
+        :returns: PK of the current calculation.
         """
-        # Get the job name to get parent pk
+
         self.transport.chdir(working_directory)
 
         retval, stdout, stderr = self.transport.exec_command_wait(f'grep "#flux" {submit_script}')
@@ -266,7 +267,7 @@ class FluxScheduler(Scheduler):
             self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
             raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
         
-        flux_values = {}
+        self.flux_values = {}
         items = stdout.strip().split('\n')
         for item in items:
             item = item.replace('#flux:', '').strip().strip('-')
@@ -274,20 +275,34 @@ class FluxScheduler(Scheduler):
                 item = item.split('=')
             else:
                 item = item.split()
-            flux_values[item[0]] = item[1]
+            self.flux_values[item[0]] = item[1]
 
         # Convert walltime to seconds
-        walltime = flux_values['t']
+        walltime = self.flux_values['t']
         if 'd' in walltime:
             walltime = 86400 * float(walltime.strip('d'))
         elif 'h' in walltime:
             walltime = 3600 * float(walltime.strip('h'))
         elif 'm' in walltime:
             walltime = 60 * float(walltime.strip('m'))
-        flux_values['t'] = walltime
+        self.flux_values['t'] = walltime
 
-        pk = int(flux_values['job-name'].split('-')[-1])
+        pk = int(self.flux_values['job-name'].split('-')[-1])
 
+        return pk
+        
+    
+    def _flux_allocation(
+        self,
+        pk: int
+    ) -> int:
+        """
+        Start a flux allocation to submit jobs.
+
+        :param pk: AiiDA PK of the current job submission.
+        :returns: Flux job ID of the persistent allocation.
+        """
+        
         parent_pk = self._get_parent_pk(pk)
 
         # Based on the parent_pk, see if there is an active flux allocation.
@@ -298,7 +313,7 @@ class FluxScheduler(Scheduler):
             flux_id = self._start_allocation(pk, parent_pk)
         elif state.active:
             # Check if there is enough walltime left for the job.
-            diff = state.walltime - flux_values['t']
+            diff = state.walltime - self.flux_values['t']
             if diff < 0:
                 self.logger.info(
                     'Current job exceeds remaining time. Killing allocation '
@@ -321,11 +336,12 @@ class FluxScheduler(Scheduler):
     def _check_allocation(
         self, 
         parent_pk: int
-    ):
+    ) -> namedtuple:
         """
         Given a parent_pk, check to see if Flux already has an active allocation.
 
         :param parent_pk: The parent PK of the job being submitted.
+        :returns: State of the current parent allocation in Flux.
         """
         joblist = self.get_jobs()
         State = namedtuple(
@@ -453,7 +469,8 @@ class FluxScheduler(Scheduler):
 
         :return: return a string with the job ID in a valid format to be used for querying.
         """
-        flux_id = self._flux_allocation(working_directory, submit_script)
+        pk = self._parse_pk(working_directory, submit_script)
+        flux_id = self._flux_allocation(pk)
         self.transport.chdir(working_directory)
         result = self.transport.exec_command_wait(
             self._get_submit_command(
@@ -538,6 +555,29 @@ class FluxScheduler(Scheduler):
         self.logger.info(f'submitting with : {submit_command}')
 
         return submit_command
+    
+    def submit_job(
+        self,
+        working_directory: str,
+        submit_script: str
+    ) -> str | ExitCode:
+        """
+        Submit a job to the Flux scheduler.
+
+        :param working_directory: Absolute filepath to working directory of the job to be submitted.
+        :param submit_script: Name of the submission script relative to the working directory.
+        """
+
+        pk = self._parse_pk(working_directory, submit_script)
+        parent_pk = self._get_parent_pk(pk)
+
+        self.transport.chdir(working_directory)
+        result = self.transport.exec_command_wait(
+            self._get_submit_command(submit_script, parent_pk)
+        )
+        
+        return self._parse_submit_output(*result)
+        
     
     def _parse_submit_output(
         self, 
@@ -690,6 +730,28 @@ class FluxScheduler(Scheduler):
             job_list.append(this_job)
 
         return job_list
+    
+    def kill_job(
+        self,
+        jobid
+    ) -> bool:
+        """
+        Function to kill a job on the Flux scheduler.
+
+        :param jobid: Job ID within Flux
+        :returns: True if executed correctly.
+        """
+
+        retval, stdout, stderr = self.transport.exec_command_wait(
+            self._get_kill_command(jobid=jobid)
+        )
+
+        if retval != 0:
+            self.logger.error(f'Error in kill_job {retval=}; {stdout=}; {stderr=}')
+
+            raise RuntimeError(f'Error while kill Flux job, {retval=}\n{stdout=}\n{stderr=}')
+        
+        return True
     
     def _get_kill_command(
         self, 
