@@ -386,6 +386,7 @@ class FluxScheduler(Scheduler):
         node = load_node(pk)
         if (node, CalcFunctionNode):
             metadata = node.get_metadata_inputs()
+            print(f'{metadata=}')
             options = metadata.get('options', {})
             resources = options.get('resources', {})
             flux = options.get('persistent_resources', None)
