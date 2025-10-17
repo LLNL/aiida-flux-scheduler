@@ -43,20 +43,14 @@ class FluxJobResource(NodeNumberJobResource):
         :return: attribute dictionary with the parsed parameters populated.
         """
 
-        print(f"{kwargs=}")
-
         mws = kwargs.pop('max_wallclock_seconds', None)
-        try:
-            mws = int(mws)
-        except ValueError:
-            raise ValueError(
-                '`max_wallclock_seconds` should be set as an int.'
-            )
-        except TypeError:
-            raise TypeError(
-                '`max_wallclock_seconds` was set as None. Provide a value in '
-                'metadata.options.persistent_resources.'
-            )
+        if mws is not None:
+            try:
+                mws = int(mws)
+            except ValueError:
+                raise ValueError(
+                    '`max_wallclock_seconds` should be set as an int.'
+                )
 
         resources = super().validate_resources(**kwargs)
         resources['max_wallclock_seconds'] = mws
