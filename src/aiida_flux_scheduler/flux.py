@@ -386,13 +386,9 @@ class FluxScheduler(Scheduler):
         node = load_node(pk)
         if (node, CalcFunctionNode):
             metadata = node.get_metadata_inputs()['metadata']
-            print(f'{metadata=}')
             options = metadata.get('options', {})
-            print(f'{options=}')
             resources = options.get('resources', {})
-            print(f'{resources=}')
             flux = options.get('persistent_resources', None)
-            print(f'{flux=}')
             if flux is None:
                 raise ValueError(
                     'Must specify `metadata.options.persistent_resources` to fully utilize the Flux scheduler.'
