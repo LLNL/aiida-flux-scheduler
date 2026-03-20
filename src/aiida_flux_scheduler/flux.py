@@ -2,17 +2,34 @@
 Plugin for Flux.
 """
 
+import datetime
+import json
+import re
+import time
+from collections import defaultdict, namedtuple
 from typing import Any
-from aiida.orm import load_node, CalcFunctionNode
+
+from aiida.common import exceptions
+from aiida.common.escaping import escape_for_bash
+from aiida.common.extendeddicts import AttributeDict
 from aiida.common.lang import type_check
 from aiida.engine.processes.exit_code import ExitCode
+from aiida.orm import CalcJobNode, load_node
 from aiida.schedulers import Scheduler, SchedulerError
-from aiida.schedulers.datastructures import JobInfo, JobState, JobTemplate, NodeNumberJobResource
-from aiida.common.extendeddicts import AttributeDict
-from aiida.common.escaping import escape_for_bash
-import json
-import datetime
-from collections import defaultdict, namedtuple
+from aiida.schedulers.datastructures import (
+    JobInfo,
+    JobState,
+    JobTemplate,
+    NodeNumberJobResource,
+)
+
+from aiida_flux_scheduler.pools import (
+    POOL_EXTRA_KEY,
+    clear_pool_runtime,
+    get_pool_group,
+    get_pool_runtime,
+    update_pool_runtime,
+)
 
 _MAP_STATUS_FLUX = {
     'D': JobState.QUEUED,  # Depend
@@ -33,7 +50,7 @@ class FluxJobResource(NodeNumberJobResource):
 
     @classmethod
     def validate_resources(
-        cls, 
+        cls,
         **kwargs: dict
     ) -> AttributeDict:
         """
@@ -44,6 +61,7 @@ class FluxJobResource(NodeNumberJobResource):
         """
 
         mws = kwargs.pop('max_wallclock_seconds', None)
+        flux_pool = kwargs.pop('flux_pool', None)
         if mws is not None:
             try:
                 mws = int(mws)
@@ -54,9 +72,10 @@ class FluxJobResource(NodeNumberJobResource):
 
         resources = super().validate_resources(**kwargs)
         resources['max_wallclock_seconds'] = mws
+        resources['flux_pool'] = flux_pool
 
         return resources
-    
+
 class FluxScheduler(Scheduler):
     """
     Flux scheduler.
@@ -89,8 +108,8 @@ class FluxScheduler(Scheduler):
     ]
 
     def _get_joblist_command(
-        self, 
-        jobs: list[str] | None = None, 
+        self,
+        jobs: list[str] | None = None,
         user: str | None = None,
         flux_id: str | None = None,
     ) -> str:
@@ -130,9 +149,9 @@ class FluxScheduler(Scheduler):
         self.logger.info(f'Checking joblist with {comm}')
 
         return comm
-    
+
     def _get_detailed_job_info_command(
-        self, 
+        self,
         job_id: str
     ) -> dict[str, Any]:
         """
@@ -145,9 +164,9 @@ class FluxScheduler(Scheduler):
         flux_id, child_id = job_id.split(':')
 
         return f"flux proxy {flux_id} flux job info {child_id} jobspec"
-        
+
     def _get_submit_script_header(
-        self, 
+        self,
         job_tmpl: JobTemplate
     ) -> str:
         """
@@ -174,7 +193,7 @@ class FluxScheduler(Scheduler):
 
         #if job_tmpl.account:
         #    header.append(f'#flux: -B {job_tmpl.account}')
-        
+
         if job_tmpl.priority:
             # Check that the specified value is within the appropriate range.
             # 0 - Hold
@@ -198,7 +217,7 @@ class FluxScheduler(Scheduler):
             header.append(f'#flux: -n '
                 f'{job_tmpl.job_resource.num_mpiprocs_per_machine * job_tmpl.job_resource.num_machines}'
             )
-        
+
         if job_tmpl.job_resource.num_cores_per_mpiproc:
             header.append(
                 f'#flux: -c {job_tmpl.job_resource.num_cores_per_mpiproc}'
@@ -216,7 +235,7 @@ class FluxScheduler(Scheduler):
                     )
                 )
 
-            # Check if total time is larger than day, hour, or minutes 
+            # Check if total time is larger than day, hour, or minutes
             # and convert to float.
 
             # Days
@@ -231,16 +250,16 @@ class FluxScheduler(Scheduler):
                 time = tot_secs
 
             header.append(f'#flux: -t {time}')
-        
+
         if isinstance(job_tmpl.custom_scheduler_commands, str) and job_tmpl.custom_scheduler_commands is not None:
             header.append(job_tmpl.custom_scheduler_commands)
 
-        header = '\n'.join(header)         
+        header = '\n'.join(header)
 
         return header
-    
+
     def _get_parent_pk(
-            self, 
+            self,
             pk: int
         ) -> int:
         """
@@ -255,7 +274,7 @@ class FluxScheduler(Scheduler):
             parent = parent.caller
 
         return parent.pk
-    
+
     def _parse_pk(
         self,
         working_directory: str,
@@ -276,7 +295,7 @@ class FluxScheduler(Scheduler):
         if retval != 0:
             self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
             raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
-        
+
         self.flux_values = {}
         items = stdout.strip().split('\n')
         for item in items:
@@ -300,8 +319,8 @@ class FluxScheduler(Scheduler):
         pk = int(self.flux_values['job-name'].split('-')[-1])
 
         return pk
-        
-    
+
+
     def _flux_allocation(
         self,
         pk: int
@@ -312,15 +331,31 @@ class FluxScheduler(Scheduler):
         :param pk: AiiDA PK of the current job submission.
         :returns: Flux job ID of the persistent allocation.
         """
-        
+
         parent_pk = self._get_parent_pk(pk)
+        node = load_node(pk)
+
+        if not isinstance(node, CalcJobNode):
+            raise TypeError(f'{node} is not a recognized type for this scheduler.')
+
+        allocation_config = self._resolve_allocation_config(node)
+        if allocation_config.get('pool'):
+            flux_id = self._get_or_create_pooled_allocation(
+                node,
+                parent_pk,
+                allocation_config,
+            )
+            self.logger.info(
+                f"Flux pool `{allocation_config['pool']}` is using flux id: {flux_id}."
+            )
+            return flux_id
 
         # Based on the parent_pk, see if there is an active flux allocation.
         state = self._check_allocation(parent_pk)
 
         if not state.active:
             self.logger.info(f'No flux allocation found for aiida-{parent_pk}. Starting one now.')
-            flux_id = self._start_allocation(pk, parent_pk)
+            flux_id = self._start_allocation(allocation_config, parent_pk)
         elif state.active:
             # Check if there is enough walltime left for the job.
             diff = state.walltime - self.flux_values['t']
@@ -335,7 +370,7 @@ class FluxScheduler(Scheduler):
                 if retval != 0:
                     self.logger.error(f'Error in _flux_allocation: {retval=}; {stdout=}; {stderr=}')
                     raise SchedulerError(f'Error during submission, {retval=}\n{stdout=}\n{stderr=}')
-                flux_id = self._start_allocation(parent_pk)
+                flux_id = self._start_allocation(allocation_config, parent_pk)
             else:
                 flux_id = state.flux_id
 
@@ -344,7 +379,7 @@ class FluxScheduler(Scheduler):
         return flux_id
 
     def _check_allocation(
-        self, 
+        self,
         parent_pk: int
     ) -> namedtuple:
         """
@@ -355,78 +390,77 @@ class FluxScheduler(Scheduler):
         """
         joblist = self.get_jobs()
         State = namedtuple(
-            'State', 
-            ['active', 'flux_id', 'walltime'], 
+            'State',
+            ['active', 'flux_id', 'walltime'],
             defaults=[False, '', 0]
         )
 
         state = State()
         for job in joblist:
-            if str(parent_pk) in job.title: 
+            if getattr(job, 'title', None) == f'aiida-{parent_pk}':
                 flux_id = job.job_id
-                total = job.requested_wallclock_time_seconds
-                used = job.wallclock_time_seconds
-                remaining = float(total) - float(used)
+                total = job.requested_wallclock_time_seconds or 0
+                used = job.wallclock_time_seconds or 0
+                remaining = total - used
                 state = State(True, flux_id, remaining)
 
         return state
 
     def _start_allocation(
         self,
-        pk,
+        allocation_config: dict[str, Any],
         parent_pk
     ) -> str:
         """
-        Start a flux allocation based on the job submission script in the working directory.
+        Start a flux allocation from a resolved allocation configuration.
 
-        :param pk: AiiDA pk of the current
+        :param allocation_config: Resolved configuration for the allocation.
         :param parent_pk: AiiDA pk of parent.
         :return: Job ID of the Flux instance.
         """
-        node = load_node(pk)
-        if (node, CalcFunctionNode):
-            metadata = node.get_metadata_inputs()['metadata']
-            options = metadata.get('options', {})
-            resources = options.get('resources', {})
-            flux = options.get('persistent_resources', None)
-            if flux is None:
-                raise ValueError(
-                    'Must specify `metadata.options.persistent_resources` to fully utilize the Flux scheduler.'
-                )
-        else:
-            raise TypeError(f'{node} is not a recognized type for this scheduler.')
-        
+        resources = allocation_config.get('resources', {})
+
         keys = (
-            'num_machines',
-            'num_mpi_procs_per_machine',
-            'queue_name',
-            'max_wallclock_seconds',
-            'account'
+            ('num_machines', 'num_machines'),
+            ('num_mpiprocs_per_machine', 'num_mpiprocs_per_machine'),
+            ('num_mpi_procs_per_machine', 'num_mpiprocs_per_machine'),
+            ('queue_name', 'queue_name'),
+            ('max_wallclock_seconds', 'max_wallclock_seconds'),
+            ('account', 'account'),
         )
 
+        allocation_resources = {}
+        for search_key, target_key in keys:
+            result = self.recursive_dict_search(search_key, resources)
+            if result is not None:
+                allocation_resources[target_key] = result
+
         values = defaultdict(str, {})
-        for resource in [resources, flux]:
-            for key in keys:
-                result = self.recursive_dict_search(key, resource)
-                if result:
-                    match key:
-                        case 'num_machines':
-                            values[key] = f'--nodes={result}'
-                        case 'num_mpi_procs_per_machine':
-                            values['num_tasks'] = f'-n {values["num_machines"] * result}'
-                        case 'queue_name':
-                            values[key] = f'-q {result}'
-                        case 'max_wallclock_seconds':
-                            values[key] = f'-t {int(result)}s'
-                        case 'account':
-                            values[key] = f'-B {result}'
 
-        values['job_name'] = f'--job-name=aiida-{parent_pk}'
+        if 'num_machines' in allocation_resources:
+            num_machines = int(allocation_resources['num_machines'])
+            values['num_machines'] = f'--nodes={num_machines}'
 
-        timeout = flux.get('timeout', '5m')
+            if 'num_mpiprocs_per_machine' in allocation_resources:
+                num_tasks = num_machines * int(allocation_resources['num_mpiprocs_per_machine'])
+                values['num_tasks'] = f'-n {num_tasks}'
+
+        if 'queue_name' in allocation_resources:
+            values['queue_name'] = f'-q {allocation_resources["queue_name"]}'
+
+        if 'max_wallclock_seconds' in allocation_resources:
+            values['max_wallclock_seconds'] = f'-t {int(allocation_resources["max_wallclock_seconds"])}s'
+
+        if 'account' in allocation_resources:
+            values['account'] = f'-B {allocation_resources["account"]}'
+
+        job_name = allocation_config.get('job_name', f'aiida-{parent_pk}')
+        values['job_name'] = f'--job-name={job_name}'
+
+        timeout = allocation_config.get('timeout', '5m')
 
         values['watcher'] = f"bash -c 'while true; do sleep 60; if [ $(flux jobs --since=-{timeout} | wc -l) -gt 1 ]; then continue; else exit; fi; done'"
-            
+
         flux_submit = (
             'flux alloc {job_name} {num_machines} {num_tasks} '
             '{queue_name} {account} {max_wallclock_seconds} -x --bg {watcher}'
@@ -449,9 +483,409 @@ class FluxScheduler(Scheduler):
 
         return flux_id
 
+    def _get_node_options(
+        self,
+        node: CalcJobNode,
+    ) -> dict[str, Any]:
+        """
+        Return scheduler options from a CalcJobNode.
+        """
+
+        metadata_inputs = node.get_metadata_inputs() or {}
+        metadata = metadata_inputs.get('metadata', {})
+
+        return metadata.get('options', {})
+
+    def _resolve_allocation_config(
+        self,
+        node: CalcJobNode,
+    ) -> dict[str, Any]:
+        """
+        Resolve allocation configuration for a job submission.
+
+        This is a temporary seam for the future pool registry. For now, the
+        allocation envelope is taken directly from the scheduler resources,
+        while still allowing users to pass a `flux_pool` selector there.
+        """
+
+        options = self._get_node_options(node)
+        resources = options.get('resources', {})
+        pool_name = self.recursive_dict_search('flux_pool', resources)
+
+        if pool_name:
+            return self._load_pool_definition(node, pool_name)
+
+        return {
+            'pool': pool_name,
+            'resources': resources,
+        }
+
+    def _load_pool_definition(
+        self,
+        node: CalcJobNode,
+        pool_name: str,
+    ) -> dict[str, Any]:
+        """
+        Load a named pool definition from the AiiDA database.
+
+        Pool definitions are stored in a namespaced group whose extras contain
+        the plugin-managed configuration payload.
+        """
+
+        if node.computer is None:
+            raise SchedulerError(f'CalcJobNode<{node.pk}> does not define a computer.')
+
+        try:
+            group = get_pool_group(
+                node.user.email,
+                node.computer.label,
+                pool_name,
+            )
+        except exceptions.NotExistent as exception:
+            raise SchedulerError(
+                f'No Flux pool definition named `{pool_name}` exists for '
+                f'user `{node.user.email}` on computer `{node.computer.label}`.'
+            ) from exception
+
+        pool_definition = group.base.extras.all.get(POOL_EXTRA_KEY)
+        if not isinstance(pool_definition, dict):
+            raise SchedulerError(
+                f'Flux pool `{pool_name}` is missing the `{POOL_EXTRA_KEY}` configuration payload.'
+            )
+
+        if not pool_definition.get('enabled', True):
+            raise SchedulerError(f'Flux pool `{pool_name}` is disabled.')
+
+        pool_resources = pool_definition.get('resources', {})
+        if not isinstance(pool_resources, dict):
+            raise SchedulerError(f'Flux pool `{pool_name}` has an invalid `resources` definition.')
+
+        return {
+            'pool': pool_name,
+            'group': group,
+            'resources': pool_resources,
+            'timeout': pool_definition.get('timeout', '5m'),
+            'job_name': pool_definition.get('job_name', f'aiida-pool-{pool_name}'),
+        }
+
+    def _get_or_create_pooled_allocation(
+        self,
+        node: CalcJobNode,
+        parent_pk: int,
+        allocation_config: dict[str, Any],
+    ) -> str:
+        """
+        Resolve a shared allocation from pool runtime state, creating it if
+        necessary under a per-pool remote lock.
+        """
+
+        pool_name = allocation_config['pool']
+        lock_timeout_seconds = int(allocation_config.get('lock_timeout_seconds', 60))
+        stale_lock_seconds = int(
+            allocation_config.get(
+                'stale_lock_seconds',
+                max(lock_timeout_seconds, 300),
+            )
+        )
+
+        self._acquire_pool_lock(
+            pool_name,
+            timeout_seconds=lock_timeout_seconds,
+            stale_lock_seconds=stale_lock_seconds,
+        )
+        try:
+            group = get_pool_group(
+                node.user.email,
+                node.computer.label,
+                pool_name,
+            )
+            runtime = get_pool_runtime(group)
+            current_flux_id = runtime.get('current_flux_id')
+
+            if current_flux_id:
+                job_info = self._get_top_level_job(current_flux_id)
+                if job_info is not None:
+                    remaining = self._get_remaining_walltime(job_info)
+                    if remaining >= self.flux_values['t']:
+                        update_pool_runtime(
+                            group,
+                            current_flux_id=current_flux_id,
+                            state='active',
+                            last_used_by_parent_pk=parent_pk,
+                            last_validated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                            remaining_seconds=remaining,
+                        )
+                        return current_flux_id
+
+                    self.logger.info(
+                        f'Flux pool `{pool_name}` allocation `{current_flux_id}` '
+                        'does not have enough remaining walltime; replacing it.'
+                    )
+                    self._cancel_job_if_exists(current_flux_id)
+                else:
+                    self.logger.info(
+                        f'Flux pool `{pool_name}` allocation `{current_flux_id}` '
+                        'could not be found; starting a replacement allocation.'
+                    )
+
+                clear_pool_runtime(group)
+
+            flux_id = self._start_allocation(allocation_config, parent_pk)
+            update_pool_runtime(
+                group,
+                current_flux_id=flux_id,
+                state='active',
+                last_used_by_parent_pk=parent_pk,
+                last_validated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            )
+            return flux_id
+        finally:
+            self._release_pool_lock(pool_name)
+
+    def _get_pool_lock_path(
+        self,
+        pool_name: str,
+    ) -> str:
+        """
+        Return the remote lock directory path for a pool.
+        """
+
+        safe_pool_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', pool_name)
+        return f'$HOME/.aiida-flux-scheduler/locks/{safe_pool_name}.lock'
+
+    def _acquire_pool_lock(
+        self,
+        pool_name: str,
+        timeout_seconds: int = 60,
+        stale_lock_seconds: int = 300,
+    ) -> None:
+        """
+        Acquire a remote directory lock for the given pool.
+        """
+
+        lock_path = self._get_pool_lock_path(pool_name)
+        lock_root = lock_path.rsplit('/', maxsplit=1)[0]
+        mkdir_root = f'mkdir -p "{lock_root}"'
+        retval, stdout, stderr = self.transport.exec_command_wait(mkdir_root)
+        if retval != 0:
+            raise SchedulerError(
+                f'Unable to prepare lock root for pool `{pool_name}`: {retval=}\n{stdout=}\n{stderr=}'
+            )
+
+        mkdir_lock = f'mkdir "{lock_path}"'
+        deadline = time.monotonic() + timeout_seconds
+
+        while True:
+            retval, stdout, stderr = self.transport.exec_command_wait(mkdir_lock)
+            if retval == 0:
+                self._write_pool_lock_metadata(pool_name)
+                return
+
+            if self._recover_stale_pool_lock(
+                pool_name,
+                stale_lock_seconds=stale_lock_seconds,
+            ):
+                continue
+
+            if time.monotonic() >= deadline:
+                raise SchedulerError(
+                    f'Timed out waiting for Flux pool lock `{pool_name}`: {retval=}\n{stdout=}\n{stderr=}'
+                )
+
+            time.sleep(1)
+
+    def _release_pool_lock(
+        self,
+        pool_name: str,
+    ) -> None:
+        """
+        Release a remote directory lock for the given pool.
+        """
+
+        lock_path = self._get_pool_lock_path(pool_name)
+        retval, stdout, stderr = self.transport.exec_command_wait(
+            f'rm -f "{self._get_pool_lock_metadata_path(pool_name)}" && rmdir "{lock_path}"'
+        )
+        if retval != 0:
+            self.logger.warning(
+                f'Unable to release Flux pool lock `{pool_name}`: {retval=}; {stdout=}; {stderr=}'
+            )
+
+    def _get_pool_lock_metadata_path(
+        self,
+        pool_name: str,
+    ) -> str:
+        """
+        Return the metadata file path stored inside a lock directory.
+        """
+
+        return f'{self._get_pool_lock_path(pool_name)}/owner.json'
+
+    def _write_pool_lock_metadata(
+        self,
+        pool_name: str,
+    ) -> None:
+        """
+        Record basic lock ownership metadata for stale-lock detection.
+        """
+
+        metadata = json.dumps(
+            {
+                'pool': pool_name,
+                'acquired_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'acquired_at_epoch': int(time.time()),
+            },
+            sort_keys=True,
+        )
+        command = (
+            f'printf %s {escape_for_bash(metadata)} > '
+            f'"{self._get_pool_lock_metadata_path(pool_name)}"'
+        )
+        retval, stdout, stderr = self.transport.exec_command_wait(command)
+        if retval != 0:
+            self._release_pool_lock(pool_name)
+            raise SchedulerError(
+                f'Unable to write metadata for Flux pool lock `{pool_name}`: '
+                f'{retval=}\n{stdout=}\n{stderr=}'
+            )
+
+    def _recover_stale_pool_lock(
+        self,
+        pool_name: str,
+        stale_lock_seconds: int,
+    ) -> bool:
+        """
+        Remove a stale lock directory if its recorded age exceeds the threshold.
+        """
+
+        age_seconds = self._get_pool_lock_age_seconds(pool_name)
+        if age_seconds is None or age_seconds < stale_lock_seconds:
+            return False
+
+        self.logger.warning(
+            f'Removing stale Flux pool lock `{pool_name}` after {age_seconds} seconds.'
+        )
+        lock_path = self._get_pool_lock_path(pool_name)
+        metadata_path = self._get_pool_lock_metadata_path(pool_name)
+        retval, stdout, stderr = self.transport.exec_command_wait(
+            f'rm -f "{metadata_path}" && rmdir "{lock_path}"'
+        )
+        if retval == 0:
+            return True
+
+        self.logger.warning(
+            f'Unable to recover stale Flux pool lock `{pool_name}`: '
+            f'{retval=}; {stdout=}; {stderr=}'
+        )
+        return False
+
+    def _get_pool_lock_age_seconds(
+        self,
+        pool_name: str,
+    ) -> int | None:
+        """
+        Return the age of a lock directory in seconds.
+
+        Prefer lock metadata created by this plugin and fall back to the remote
+        directory modification time for older lock directories.
+        """
+
+        metadata_path = self._get_pool_lock_metadata_path(pool_name)
+        retval, stdout, _ = self.transport.exec_command_wait(
+            f'cat "{metadata_path}"'
+        )
+        if retval == 0:
+            try:
+                metadata = json.loads(stdout)
+            except json.JSONDecodeError:
+                self.logger.warning(
+                    f'Flux pool lock `{pool_name}` metadata is invalid JSON; '
+                    'falling back to directory timestamps.'
+                )
+            else:
+                acquired_at_epoch = metadata.get('acquired_at_epoch')
+                if isinstance(acquired_at_epoch, int):
+                    return max(0, int(time.time()) - acquired_at_epoch)
+
+        lock_path = self._get_pool_lock_path(pool_name)
+        command = (
+            f'(stat -c %Y "{lock_path}" 2>/dev/null || '
+            f'stat -f %m "{lock_path}" 2>/dev/null)'
+        )
+        retval, stdout, stderr = self.transport.exec_command_wait(command)
+        if retval != 0:
+            self.logger.warning(
+                f'Unable to inspect Flux pool lock age for `{pool_name}`: '
+                f'{retval=}; {stdout=}; {stderr=}'
+            )
+            return None
+
+        try:
+            mtime_epoch = int(stdout.strip())
+        except ValueError:
+            self.logger.warning(
+                f'Unable to parse Flux pool lock mtime for `{pool_name}`: {stdout!r}'
+            )
+            return None
+
+        return max(0, int(time.time()) - mtime_epoch)
+
+    def _get_top_level_job(
+        self,
+        flux_id: str,
+    ) -> JobInfo | None:
+        """
+        Return top-level Flux job information for a single allocation id.
+        """
+
+        fields = self._FIELD_SEPARATOR.join(f'{{{field[0]}}}' for field in self.fields)
+        command = f"flux jobs {escape_for_bash(flux_id)} --format '{fields}'"
+        retval, stdout, stderr = self.transport.exec_command_wait(command)
+
+        if retval != 0:
+            self.logger.info(
+                f'Flux allocation lookup failed for `{flux_id}`: {retval=}; {stdout=}; {stderr=}'
+            )
+            return None
+
+        jobs = self._parse_joblist_output(retval, stdout, stderr)
+        if not jobs:
+            return None
+
+        return jobs[0]
+
+    def _get_remaining_walltime(
+        self,
+        job_info: JobInfo,
+    ) -> int:
+        """
+        Return remaining walltime in seconds for a Flux job.
+        """
+
+        total = job_info.requested_wallclock_time_seconds or 0
+        used = job_info.wallclock_time_seconds or 0
+
+        return total - used
+
+    def _cancel_job_if_exists(
+        self,
+        job_id: str,
+    ) -> None:
+        """
+        Attempt to cancel a Flux job, ignoring missing-job failures.
+        """
+
+        retval, stdout, stderr = self.transport.exec_command_wait(
+            self._get_kill_command(job_id)
+        )
+        if retval != 0:
+            self.logger.warning(
+                f'Unable to cancel Flux job `{job_id}`: {retval=}; {stdout=}; {stderr=}'
+            )
+
     def recursive_dict_search(
-        self, 
-        key, 
+        self,
+        key,
         dictionary: dict
     ):
         """
@@ -472,7 +906,28 @@ class FluxScheduler(Scheduler):
                         if result is not None:
                             return result
         return None
-    
+
+    def _parse_seconds_field(
+        self,
+        value: str | None,
+        field_name: str,
+        job_id: str,
+    ) -> int | None:
+        """
+        Parse Flux time fields that are reported as float seconds.
+        """
+
+        if value in (None, ''):
+            return None
+
+        try:
+            return int(float(value))
+        except ValueError:
+            self.logger.warning(
+                f'Error parsing {field_name} for job id {job_id}: {value!r}'
+            )
+            return None
+
     def get_jobs(
         self,
         jobs: list[str] | None = None,
@@ -481,13 +936,13 @@ class FluxScheduler(Scheduler):
     ) -> list[JobInfo] | dict[str, JobInfo]:
         """Return the list of currently active jobs.
 
-        .. note:: typically, only either jobs or user can be specified. See 
+        .. note:: typically, only either jobs or user can be specified. See
             also comments in `_get_joblist_command`.
 
         :param list jobs: a list of jobs to check; only these are checked
         :param str user: a string with a user: only jobs of this user are checked
-        :param list as_dict: if False (default), a list of JobInfo objects 
-            is returned. If True, a dictionary is returned, having as key 
+        :param list as_dict: if False (default), a list of JobInfo objects
+            is returned. If True, a dictionary is returned, having as key
             the job_id and as value the JobInfo object.
         :return: list of active jobs
         """
@@ -499,7 +954,7 @@ class FluxScheduler(Scheduler):
                 with self.transport:
                     retval, stdout, stderr = self.transport.exec_command_wait(
                         self._get_joblist_command(
-                            jobs=[child_id], 
+                            jobs=[child_id],
                             user=user,
                             flux_id=flux_id
                         )
@@ -512,7 +967,7 @@ class FluxScheduler(Scheduler):
             with self.transport:
                 retval, stdout, stderr = self.transport.exec_command_wait(
                     self._get_joblist_command(
-                        jobs=jobs, 
+                        jobs=jobs,
                         user=user
                     )
                 )
@@ -527,24 +982,24 @@ class FluxScheduler(Scheduler):
         return joblist
 
     def _get_submit_command(
-        self, 
+        self,
         submit_script: str,
         flux_id: str
     ) -> str:
         """
         Return the string to execute the submission script.
 
-        :param submit_script: Path to the submission script relative to the 
+        :param submit_script: Path to the submission script relative to the
             working directory.
         :return submit_command: Command used to submit the submission script.
         """
 
-        submit_command = f"flux proxy {flux_id} flux batch {submit_script}"              
+        submit_command = f"flux proxy {flux_id} flux batch {submit_script}"
 
         self.logger.info(f'submitting with : {submit_command}')
 
         return submit_command
-    
+
     def submit_job(
         self,
         working_directory: str,
@@ -562,7 +1017,7 @@ class FluxScheduler(Scheduler):
         self.transport.chdir(working_directory)
         result = self.transport.exec_command_wait(
             self._get_submit_command(
-                escape_for_bash(submit_script), 
+                escape_for_bash(submit_script),
                 flux_id
             )
         )
@@ -570,12 +1025,12 @@ class FluxScheduler(Scheduler):
 
         total_job_id = f'{flux_id}:{child_job_id}'
 
-        return total_job_id        
-    
+        return total_job_id
+
     def _parse_submit_output(
-        self, 
-        retval: int, 
-        stdout: str, 
+        self,
+        retval: int,
+        stdout: str,
         stderr: str
     ) -> str | ExitCode:
         """
@@ -607,16 +1062,16 @@ class FluxScheduler(Scheduler):
         raise SchedulerError(
             'Error during submission, cound not retrieve the jobID from flux output; see log for more info.'
         )
-    
+
     def _parse_joblist_output(
-        self, 
-        retval: int, 
-        stdout: str, 
+        self,
+        retval: int,
+        stdout: str,
         stderr: str
     ) -> list[JobInfo]:
         """
-        Parse the output from the job queue as returned by the 
-        _get_joblist_command command. The return is a list of lines, one for 
+        Parse the output from the job queue as returned by the
+        _get_joblist_command command. The return is a list of lines, one for
         each job.
 
         :param retval: Return value from the command.
@@ -654,7 +1109,7 @@ class FluxScheduler(Scheduler):
                 job_state_raw = thisjob_dict['state_raw']
             except KeyError:
                 self.logger.error(f"Wrong line length in flux output! '{job}'")
-            
+
             try:
                 job_state_string = _MAP_STATUS_FLUX[job_state_raw]
             except KeyError:
@@ -692,18 +1147,19 @@ class FluxScheduler(Scheduler):
 
             this_job.queue_name = thisjob_dict['partition']
 
-            try:
-                walltime = thisjob_dict['time_limit']
-                this_job.requested_wallclock_time_seconds = walltime
-            except ValueError:
-                self.logger.warning(f'Error parsing the time limit for job id {this_job.job_id}')
+            this_job.requested_wallclock_time_seconds = self._parse_seconds_field(
+                thisjob_dict.get('time_limit'),
+                'time_limit',
+                this_job.job_id,
+            )
+
+            this_job.wallclock_time_seconds = self._parse_seconds_field(
+                thisjob_dict.get('time_used'),
+                'time_used',
+                this_job.job_id,
+            )
 
             if this_job.job_state == JobState.RUNNING:
-                try:
-                    this_job.wallclock_time_seconds = thisjob_dict['time_used']
-                except ValueError:
-                    self.logger.warning(f'Error parsing time_used for job id {this_job.job_id}')
-
                 try:
                     dispatch_time = float(thisjob_dict['dispatch_time'])
                     dispatch_time = datetime.datetime.fromtimestamp(dispatch_time)
@@ -723,7 +1179,7 @@ class FluxScheduler(Scheduler):
             job_list.append(this_job)
 
         return job_list
-    
+
     def kill_job(
         self,
         jobid
@@ -743,11 +1199,11 @@ class FluxScheduler(Scheduler):
             self.logger.error(f'Error in kill_job {retval=}; {stdout=}; {stderr=}')
 
             raise RuntimeError(f'Error while kill Flux job, {retval=}\n{stdout=}\n{stderr=}')
-        
+
         return True
-    
+
     def _get_kill_command(
-        self, 
+        self,
         jobid: str
     ) -> str:
         """
@@ -758,11 +1214,11 @@ class FluxScheduler(Scheduler):
         """
 
         return f"flux cancel {jobid}"
-    
+
     def _parse_kill_output(
-        self, 
-        retval: int, 
-        stdout: str, 
+        self,
+        retval: int,
+        stdout: str,
         stderr: str
     ) -> bool:
         """
@@ -798,18 +1254,18 @@ class FluxScheduler(Scheduler):
                 f'text in stdout: {stdout}'
             )
 
-        return 
-    
+        return
+
     def parse_output(
-        self, 
-        detailed_job_info: dict[str, str | int] | None = None, 
-        stdout: str | None = None, 
+        self,
+        detailed_job_info: dict[str, str | int] | None = None,
+        stdout: str | None = None,
         stderr: str | None = None
     ) -> ExitCode | None:
         """
         Parse the output of the scheduler.
 
-        :param detailed_job_info: dictionary with the ouput returned by the 
+        :param detailed_job_info: dictionary with the ouput returned by the
             `Scheduler.get_detailed_job_info` command. This should contain the
             keys `retval`, `stdout`, and `stderr` corresponding to the return
             value, stdout and stderr returned by the accounting command
@@ -832,7 +1288,7 @@ class FluxScheduler(Scheduler):
                 )
 
             # The format of the detailed job info should be a dictionary.
-            type_check(detailed_stdout, dict) 
+            type_check(detailed_stdout, dict)
 
             #data = dict(zip(fields, attributes))
 

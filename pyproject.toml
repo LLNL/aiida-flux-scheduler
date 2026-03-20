@@ -17,15 +17,15 @@ classifiers = [
     'Operating System :: POSIX :: Linux',
     'Operating System :: MacOS :: MacOS X',
     'Programming Language :: Python',
-    'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: 3.11',
     'Topic :: Scientific/Engineering'
 ]
 keywords = ['aiida', 'workflows', 'flux', 'scheduler']
-requires-python = '>=3.9'
+requires-python = '>=3.10'
 dependencies = [
     'aiida-core~=2.0',
+    'click',
     'numpy'
 ]
 
@@ -34,13 +34,17 @@ Homepage = "https://github.com/LLNL/aiida-flux-scheduler"
 Repository = "https://github.com/LLNL/aiida-flux-scheduler"
 Issues = "https://github.com/LLNL/aiida-flux-scheduler/issues"
 
+[project.scripts]
+aiida-flux = "aiida_flux_scheduler.cli:cli"
+
 [project.optional-dependencies]
 docs = [
     'sphinx',
     'sphinx-autoapi',
     'sphinx-book-theme',
     'sphinx-click',
-    'sphinx-copybutton'
+    'sphinx-copybutton',
+    'myst-parser',
 ]
 pre-commit = [
     'pre-commit',
@@ -58,3 +62,28 @@ tests = [
 
 [tool.flit.module]
 name = 'aiida_flux_scheduler'
+
+[tool.ruff]
+target-version = 'py310'
+line-length = 88
+
+[tool.ruff.lint]
+select = ['E', 'F', 'I']
+ignore = ['E501']
+
+[tool.mypy]
+python_version = '3.10'
+files = ['src']
+check_untyped_defs = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ['aiida.*', 'click', 'numpy']
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ['aiida_flux_scheduler.flux']
+ignore_errors = true
