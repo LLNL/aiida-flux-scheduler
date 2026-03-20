@@ -196,6 +196,7 @@ def pool_delete(name: str, computer_label: str, force: bool) -> None:
     _load_profile()
     user = get_current_user()
     group = _get_pool_for_current_user(name, computer_label)
+    group_label = group.label
 
     try:
         current_flux_id = delete_pool_group(
@@ -207,7 +208,7 @@ def pool_delete(name: str, computer_label: str, force: bool) -> None:
     except exceptions.ValidationError as exception:
         raise click.ClickException(str(exception)) from exception
 
-    message = f'Deleted Flux pool `{name}` from group `{group.label}`.'
+    message = f'Deleted Flux pool `{name}` from group `{group_label}`.'
     if current_flux_id:
         message = (
             f'{message} Removed runtime reference to allocation '
